@@ -240,6 +240,34 @@ export class VSCodeTool {
     console.log(`Element found: ${selector}`);
   }
 
+  async showCopilotChat(): Promise<boolean> {
+    if (!this.page) {
+      throw new Error('VS Code not launched. Call launch() first.');
+    }
+
+    console.log('Opening Copilot chat window using keyboard shortcut...');
+    
+    try {
+      // Use the keyboard shortcut Ctrl+Alt+I (or Cmd+Alt+I on Mac) to open Copilot chat
+      await this.page.keyboard.press('Control+Alt+i');
+      
+      // Verify the Copilot chat window is present using the div.interactive-session selector
+      console.log('Verifying Copilot chat window presence...');
+      
+      try {
+        await this.page.waitForSelector('div.interactive-session', { timeout: 5000 });
+        console.log('✅ Copilot chat window successfully opened and verified!');
+        return true;
+      } catch (error) {
+        console.log('❌ Copilot chat window not found with div.interactive-session selector');
+        return false;
+      }
+    } catch (error) {
+      console.error('Error opening Copilot chat:', error);
+      return false;
+    }
+  }
+
   async close(): Promise<void> {
     console.log('Closing VS Code tool...');
     
@@ -298,6 +326,17 @@ async function main() {
     
     // Analyze workbench structure
     await vscode.getWorkbenchElements();
+    
+    // Try to open Copilot chat and verify it's present
+    console.log('\n🤖 Testing Copilot chat functionality...');
+    const copilotSuccess = await vscode.showCopilotChat();
+    if (copilotSuccess) {
+      console.log('✅ Copilot chat opened successfully!');
+      // Take another screenshot to show the Copilot chat
+      await vscode.takeScreenshot('desktop-vscode-with-copilot.png');
+    } else {
+      console.log('⚠️ Copilot chat could not be opened or verified');
+    }
     
     // Dump the DOM
     await vscode.dumpDOM();

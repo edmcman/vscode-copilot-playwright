@@ -24,7 +24,18 @@ async function example() {
     console.log('🔍 Analyzing workbench structure...');
     const workbenchInfo = await vscode.getWorkbenchElements();
     
-    // 5. Dump the DOM
+    // 5. Test Copilot chat functionality
+    console.log('🤖 Testing Copilot chat...');
+    const copilotOpened = await vscode.showCopilotChat();
+    if (copilotOpened) {
+      console.log('✅ Copilot chat opened and verified successfully!');
+      // Take a screenshot with Copilot chat open
+      await vscode.takeScreenshot('desktop-vscode-copilot-chat.png');
+    } else {
+      console.log('⚠️ Copilot chat could not be opened or is not available');
+    }
+    
+    // 6. Dump the DOM
     console.log('📄 Dumping DOM structure...');
     await vscode.dumpDOM();
     
