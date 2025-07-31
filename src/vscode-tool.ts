@@ -13,9 +13,10 @@ export class VSCodeTool {
   private userDataDir: string;
 
   constructor() {
-    // Create a unique temporary directory for this VS Code instance
-    this.userDataDir = path.join(os.tmpdir(), `vscode-playwright-${Date.now()}`);
-    console.log(`Using temporary VS Code user data directory: ${this.userDataDir}`);
+    // Use a consistent directory for this VS Code instance to persist settings and login
+    // Base the path on the file's directory rather than current working directory
+    this.userDataDir = path.join(__dirname, '..', '.vscode-playwright-data');
+    console.log(`Using persistent VS Code user data directory: ${this.userDataDir}`);
   }
 
   async launch(workspacePath?: string): Promise<void> {
@@ -266,15 +267,15 @@ export class VSCodeTool {
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
     
-    // Clean up temporary user data directory
-    if (fs.existsSync(this.userDataDir)) {
-      try {
-        console.log('Cleaning up temporary directory...');
-        fs.rmSync(this.userDataDir, { recursive: true, force: true });
-      } catch (error) {
-        console.log('Warning: Could not clean up temporary directory:', error);
-      }
-    }
+    // Clean up temporary user data directory is disabled to persist Copilot login
+    // if (fs.existsSync(this.userDataDir)) {
+    //   try {
+    //     console.log('Cleaning up temporary directory...');
+    //     fs.rmSync(this.userDataDir, { recursive: true, force: true });
+    //   } catch (error) {
+    //     console.log('Warning: Could not clean up temporary directory:', error);
+    //   }
+    // }
     
     console.log('VS Code tool closed.');
   }
@@ -308,8 +309,7 @@ async function main() {
     console.error('❌ Error:', error);
   } finally {
     // Keep the VS Code instance open for inspection (comment out the next line to keep it open)
-    // await vscode.close();
-    console.log('VS Code instance left open for inspection. Close manually when done.');
+    await vscode.close();
   }
 }
 
