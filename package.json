@@ -1,0 +1,23 @@
+{
+  "name": "vscode-copilot-playwright",
+  "version": "1.0.0",
+  "description": "Playwright tool for interacting with VS Code",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/vscode-tool.js",
+    "dev": "ts-node src/vscode-tool.ts",
+    "example": "ts-node src/example.ts"
+  },
+  "keywords": ["playwright", "vscode", "automation"],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "ts-node": "^10.9.0"
+  },
+  "dependencies": {
+    "playwright": "^1.40.0"
+  }
+}
