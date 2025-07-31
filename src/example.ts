@@ -29,7 +29,15 @@ async function example() {
     const copilotOpened = await vscode.showCopilotChat();
     if (copilotOpened) {
       console.log('✅ Copilot chat opened and verified successfully!');
-      // Take a screenshot with Copilot chat open
+      
+      // Test writing a chat message
+      console.log('💬 Writing a test message...');
+      const messageWritten = await vscode.writeChatMessage('Can you help me write a TypeScript function?');
+      if (messageWritten) {
+        console.log('✅ Example chat message written successfully!');
+      }
+      
+      // Take a screenshot with Copilot chat open and message written
       await vscode.takeScreenshot('desktop-vscode-copilot-chat.png');
     } else {
       console.log('⚠️ Copilot chat could not be opened or is not available');

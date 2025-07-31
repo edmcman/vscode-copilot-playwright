@@ -268,6 +268,36 @@ export class VSCodeTool {
     }
   }
 
+  async writeChatMessage(message: string): Promise<boolean> {
+    if (!this.page) {
+      throw new Error('VS Code not launched. Call launch() first.');
+    }
+
+    console.log(`Writing chat message: "${message}"`);
+    
+    try {
+      // Wait for the chat input container to be available
+      await this.page.waitForSelector('div.chat-input-container', { timeout: 1000 });
+      
+      // Find the input element within the chat editor container
+      const inputElement = await this.page.$('div.native-edit-context');
+      
+      if (!inputElement) {
+        console.log('❌ Chat input element not found');
+        return false;
+      }
+
+      // Focus and fill the textarea with the message
+      //await inputElement.click();
+      await inputElement.type(message);
+      
+      return true;
+    } catch (error) {
+      console.error('Error writing chat message:', error);
+      return false;
+    }
+  }
+
   async close(): Promise<void> {
     console.log('Closing VS Code tool...');
     
@@ -332,7 +362,15 @@ async function main() {
     const copilotSuccess = await vscode.showCopilotChat();
     if (copilotSuccess) {
       console.log('✅ Copilot chat opened successfully!');
-      // Take another screenshot to show the Copilot chat
+      
+      // Try to write a chat message
+      console.log('\n💬 Testing chat message writing...');
+      const messageSuccess = await vscode.writeChatMessage('Hello, can you help me with TypeScript?');
+      if (messageSuccess) {
+        console.log('✅ Chat message written successfully!');
+      }
+      
+      // Take a screenshot to show the Copilot chat with message
       await vscode.takeScreenshot('desktop-vscode-with-copilot.png');
     } else {
       console.log('⚠️ Copilot chat could not be opened or verified');
