@@ -117,13 +117,12 @@ export class VSCodeTool {
     
     this.page = pages[0];
     
-    // Wait for VS Code workbench to load
+    // Wait for VS Code workbench to load - this is critical for proper functionality
     try {
       await this.page.waitForSelector('.monaco-workbench', { timeout: 30000 });
     } catch (error) {
-      // If workbench selector doesn't work, wait for any content
-      console.log('Workbench selector not found, waiting for basic content...');
-      await this.page.waitForLoadState('domcontentloaded');
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to find VS Code workbench: Selector '.monaco-workbench' not found. This indicates VS Code did not load properly. ${errorMessage}`);
     }
   }
 
@@ -152,59 +151,6 @@ export class VSCodeTool {
     console.log(`DOM dumped to: ${filepath}`);
 
     return htmlContent;
-  }
-
-  async getWorkbenchElements(): Promise<any> {
-    if (!this.page) {
-      throw new Error('VS Code not launched. Call launch() first.');
-    }
-
-    console.log('Analyzing VS Code workbench structure...');
-
-    // Get key VS Code elements
-    const workbenchInfo = await this.page.evaluate(() => {
-      const workbench = document.querySelector('.monaco-workbench');
-      const titleBar = document.querySelector('.titlebar');
-      const activityBar = document.querySelector('.activitybar');
-      const sidebar = document.querySelector('.sidebar');
-      const editor = document.querySelector('.editor-container');
-      const panel = document.querySelector('.panel');
-      const statusBar = document.querySelector('.statusbar');
-
-      return {
-        workbench: workbench ? {
-          className: workbench.className,
-          childCount: workbench.children.length
-        } : null,
-        titleBar: titleBar ? {
-          className: titleBar.className,
-          text: titleBar.textContent?.trim()
-        } : null,
-        activityBar: activityBar ? {
-          className: activityBar.className,
-          childCount: activityBar.children.length
-        } : null,
-        sidebar: sidebar ? {
-          className: sidebar.className,
-          visible: !sidebar.classList.contains('hidden')
-        } : null,
-        editor: editor ? {
-          className: editor.className,
-          childCount: editor.children.length
-        } : null,
-        panel: panel ? {
-          className: panel.className,
-          visible: !panel.classList.contains('hidden')
-        } : null,
-        statusBar: statusBar ? {
-          className: statusBar.className,
-          text: statusBar.textContent?.trim()
-        } : null
-      };
-    });
-
-    console.log('VS Code Workbench Analysis:', JSON.stringify(workbenchInfo, null, 2));
-    return workbenchInfo;
   }
 
   async takeScreenshot(filename?: string): Promise<string> {
@@ -268,7 +214,7 @@ export class VSCodeTool {
     }
   }
 
-  async writeChatMessageHelper(message: string): Promise<boolean> {
+  async writeChatMessageHelper(message: string): Promise<void> {
     if (!this.page) {
       throw new Error('VS Code not launched. Call launch() first.');
     }
@@ -289,7 +235,6 @@ export class VSCodeTool {
       // Focus and fill the textarea with the message
       await inputElement.type(message);
       
-      return true;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (errorMessage.includes('Timeout') || errorMessage.includes('waiting for selector')) {
@@ -299,7 +244,7 @@ export class VSCodeTool {
     }
   }
 
-  async sendChatMessageHelper(): Promise<boolean> {
+  async sendChatMessageHelper(): Promise<void> {
     if (!this.page) {
       throw new Error('VS Code not launched. Call launch() first.');
     }
@@ -318,7 +263,6 @@ export class VSCodeTool {
       await sendButton.click();
       
       console.log('✅ Chat message sent successfully!');
-      return true;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (errorMessage.includes('Timeout') || errorMessage.includes('waiting for selector')) {
@@ -340,27 +284,14 @@ export class VSCodeTool {
 
     console.log(`📝 Writing and sending chat message: "${message}"`);
     
-    try {
-      // First write the message
-      const written = await this.writeChatMessageHelper(message);
-      if (!written) {
-        console.log('❌ Failed to write chat message');
-        return false;
-      }
+    // First write the message - this will throw if it fails
+    await this.writeChatMessageHelper(message);
 
-      // Then send it
-      const sent = await this.sendChatMessageHelper();
-      if (!sent) {
-        console.log('❌ Failed to send chat message');
-        return false;
-      }
+    // Then send it - this will throw if it fails
+    await this.sendChatMessageHelper();
 
-      console.log('✅ Chat message written and sent successfully!');
-      return true;
-    } catch (error) {
-      console.error('Error in sendChatMessage:', error);
-      return false;
-    }
+    console.log('✅ Chat message written and sent successfully!');
+    return true;
   }
 
   async close(): Promise<void> {
