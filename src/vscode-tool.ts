@@ -252,22 +252,20 @@ export class VSCodeTool {
     console.log('Sending chat message...');
     
     try {
-      // Find the send button
-      const sendButton = await this.page.waitForSelector('a.action-label.codicon.codicon-send', { timeout: 1000 });
-
-      if (!sendButton) {
-        throw new Error('Send button not found: a.action-label.codicon.codicon-send selector failed');
-      }
-
-      // Click the send button
-      await sendButton.click();
+      // Use Playwright Locator for the send button
+      const sendButtonLocator = this.page.locator('a.action-label.codicon.codicon-send');
+      // Wait for the send button to be visible and enabled
+      await sendButtonLocator.waitFor({ state: 'visible', timeout: 1000 });
+      // Click the send button using Locator API (robust against DOM detachment)
+      console.log('Clicking send button using Locator...');
+      await sendButtonLocator.click();
 
       // Wait for the send button to become invisible
-      await this.page.waitForSelector('a.action-label.codicon.codicon-send', { state: 'hidden', timeout: 1000 });
+      await sendButtonLocator.waitFor({ state: 'hidden', timeout: 1000 });
 
       // Wait for the send button to become visible again. This can take a long time!
-      await this.page.waitForSelector('a.action-label.codicon.codicon-send', { state: 'visible', timeout: 60000 });
-      
+      await sendButtonLocator.waitFor({ state: 'visible', timeout: 60000 });
+
       console.log('✅ Chat message sent successfully!');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -348,32 +346,29 @@ export class VSCodeTool {
 
       type ChatMessage = { entity: 'user' | 'assistant'; message: string };
       let allMessages: ChatMessage[] = [];
-      const seenMessages = new Set<string>();
+      const seenMessages = new Set<string>(); // Will store JSON.stringify of each message object
 
       // Helper to collect visible messages as structured objects
       const collectMessages = () => {
         const rows = rowsContainer.querySelectorAll('div.monaco-list-row');
         rows.forEach(row => {
+          const rowId = row.getAttribute('id');
+          if (!rowId) return; // skip if no id
+          if (seenMessages.has(rowId)) return;
           // User message
           const userMsg = row.querySelector('.interactive-request .rendered-markdown');
           if (userMsg) {
             const msgText = userMsg.textContent?.trim() ?? "";
-            const key = `user:${msgText}`;
-            if (!seenMessages.has(key)) {
-              allMessages.push({ entity: 'user', message: msgText });
-              seenMessages.add(key);
-            }
+            allMessages.push({ entity: 'user', message: msgText });
+            seenMessages.add(rowId);
             return;
           }
           // Assistant message
           const assistantMsg = row.querySelector('.interactive-response .rendered-markdown');
           if (assistantMsg) {
             const msgText = assistantMsg.textContent?.trim() ?? "";
-            const key = `assistant:${msgText}`;
-            if (!seenMessages.has(key)) {
-              allMessages.push({ entity: 'assistant', message: msgText });
-              seenMessages.add(key);
-            }
+            allMessages.push({ entity: 'assistant', message: msgText });
+            seenMessages.add(rowId);
             return;
           }
         });
