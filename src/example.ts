@@ -35,6 +35,11 @@ async function example() {
       
       // Take a screenshot with Copilot chat open and message written
       await vscode.takeScreenshot('desktop-vscode-copilot-chat.png');
+
+      // Extract all Copilot chat messages and log them
+      console.log('📝 Extracting all Copilot chat messages...');
+      const allMessages = await vscode.extractAllChatMessages();
+      console.log('All Copilot chat messages:', allMessages);
     } else {
       console.log('⚠️ Copilot chat could not be opened or is not available');
     }

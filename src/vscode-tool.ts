@@ -329,4 +329,58 @@ export class VSCodeTool {
     
     console.log('VS Code tool closed.');
   }
+
+  // Uses MutationObserver to accumulate all chat messages by scrolling through the virtualized list
+  async extractAllChatMessages() {
+
+    // Use Playwright API only
+    if (!this.page) throw new Error('VS Code not launched. Call launch() first.');
+
+    const session = await this.page.waitForSelector('div.interactive-session');
+    if (!session) return [];
+
+    const scrollable = await session.$('div.interactive-list div.monaco-list div.monaco-scrollable-element');
+    if (!scrollable) return [];
+
+    const rowsContainer = await scrollable.$('div.monaco-list-rows');
+    if (!rowsContainer) return [];
+
+    let allMessages = new Set<string>();
+
+    // Helper to collect visible messages
+    const collectMessages = async () => {
+      const rows = await rowsContainer.$$('div.monaco-list-row');
+      for (const row of rows) {
+        const text = (await row.textContent())?.trim() ?? "";
+        allMessages.add(text);
+      }
+    };
+
+    // Initial collection
+    await collectMessages();
+
+    let lastScrollTop = -1;
+    let unchangedScrolls = 0;
+
+    // Scroll and wait for new messages
+    while (unchangedScrolls < 3) {
+      // Scroll down
+      await scrollable.evaluate((el: HTMLElement) => { el.scrollTop += 200; });
+      await new Promise(r => setTimeout(r, 200));
+      // Get current scrollTop
+      const currentScrollTop = await scrollable.evaluate((el: HTMLElement) => el.scrollTop);
+      if (currentScrollTop === lastScrollTop) {
+        unchangedScrolls++;
+      } else {
+        unchangedScrolls = 0;
+        lastScrollTop = currentScrollTop;
+      }
+      await collectMessages();
+    }
+
+    // Final collection
+    await collectMessages();
+
+    return Array.from(allMessages);
+  }
 }
