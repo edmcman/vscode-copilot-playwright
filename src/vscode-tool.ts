@@ -333,54 +333,59 @@ export class VSCodeTool {
   // Uses MutationObserver to accumulate all chat messages by scrolling through the virtualized list
   async extractAllChatMessages() {
 
-    // Use Playwright API only
     if (!this.page) throw new Error('VS Code not launched. Call launch() first.');
 
-    const session = await this.page.waitForSelector('div.interactive-session');
-    if (!session) return [];
+    // Use page.evaluate to run a MutationObserver in the browser context
+    const allMessages = await this.page.evaluate(async () => {
+      const session = document.querySelector('div.interactive-session');
+      if (!session) return [];
 
-    const scrollable = await session.$('div.interactive-list div.monaco-list div.monaco-scrollable-element');
-    if (!scrollable) return [];
+      const scrollable = session.querySelector('div.interactive-list div.monaco-list div.monaco-scrollable-element');
+      if (!scrollable) return [];
 
-    const rowsContainer = await scrollable.$('div.monaco-list-rows');
-    if (!rowsContainer) return [];
+      const rowsContainer = scrollable.querySelector('div.monaco-list-rows');
+      if (!rowsContainer) return [];
 
-    let allMessages = new Set<string>();
+      let allMessages = new Set();
 
-    // Helper to collect visible messages
-    const collectMessages = async () => {
-      const rows = await rowsContainer.$$('div.monaco-list-row');
-      for (const row of rows) {
-        const text = (await row.textContent())?.trim() ?? "";
-        allMessages.add(text);
+      // Helper to collect visible messages
+      const collectMessages = () => {
+        const rows = rowsContainer.querySelectorAll('div.monaco-list-row');
+        rows.forEach(row => {
+          allMessages.add(row.textContent?.trim() ?? "");
+        });
+      };
+
+      // Set up MutationObserver
+      let observer = new MutationObserver(() => {
+        collectMessages();
+      });
+      observer.observe(rowsContainer, { childList: true, subtree: true });
+
+      // Initial collection
+      collectMessages();
+
+      let lastScrollTop = -1;
+      let unchangedScrolls = 0;
+
+      // Scroll and wait for new messages
+      while (unchangedScrolls < 3) {
+        scrollable.scrollTop += 200;
+        await new Promise(resolve => setTimeout(resolve, 200)); // Playwright's waitForTimeout is not available in browser context
+        if (scrollable.scrollTop === lastScrollTop) {
+          unchangedScrolls++;
+        } else {
+          unchangedScrolls = 0;
+          lastScrollTop = scrollable.scrollTop;
+        }
       }
-    };
 
-    // Initial collection
-    await collectMessages();
+      // Final collection
+      collectMessages();
+      observer.disconnect();
 
-    let lastScrollTop = -1;
-    let unchangedScrolls = 0;
-
-    // Scroll and wait for new messages
-    while (unchangedScrolls < 3) {
-      // Scroll down
-      await scrollable.evaluate((el: HTMLElement) => { el.scrollTop += 200; });
-      await new Promise(r => setTimeout(r, 200));
-      // Get current scrollTop
-      const currentScrollTop = await scrollable.evaluate((el: HTMLElement) => el.scrollTop);
-      if (currentScrollTop === lastScrollTop) {
-        unchangedScrolls++;
-      } else {
-        unchangedScrolls = 0;
-        lastScrollTop = currentScrollTop;
-      }
-      await collectMessages();
-    }
-
-    // Final collection
-    await collectMessages();
-
-    return Array.from(allMessages);
+      return Array.from(allMessages);
+    });
+    return allMessages;
   }
 }
