@@ -261,6 +261,12 @@ export class VSCodeTool {
 
       // Click the send button
       await sendButton.click();
+
+      // Wait for the send button to become invisible
+      await this.page.waitForSelector('a.action-label.codicon.codicon-send', { state: 'hidden', timeout: 1000 });
+
+      // Wait for the send button to become visible again. This can take a long time!
+      await this.page.waitForSelector('a.action-label.codicon.codicon-send', { state: 'visible', timeout: 60000 });
       
       console.log('✅ Chat message sent successfully!');
     } catch (error) {
