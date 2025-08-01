@@ -346,13 +346,36 @@ export class VSCodeTool {
       const rowsContainer = scrollable.querySelector('div.monaco-list-rows');
       if (!rowsContainer) return [];
 
-      let allMessages = new Set();
+      type ChatMessage = { entity: 'user' | 'assistant'; message: string };
+      let allMessages: ChatMessage[] = [];
+      const seenMessages = new Set<string>();
 
-      // Helper to collect visible messages
+      // Helper to collect visible messages as structured objects
       const collectMessages = () => {
         const rows = rowsContainer.querySelectorAll('div.monaco-list-row');
         rows.forEach(row => {
-          allMessages.add(row.textContent?.trim() ?? "");
+          // User message
+          const userMsg = row.querySelector('.interactive-request .rendered-markdown');
+          if (userMsg) {
+            const msgText = userMsg.textContent?.trim() ?? "";
+            const key = `user:${msgText}`;
+            if (!seenMessages.has(key)) {
+              allMessages.push({ entity: 'user', message: msgText });
+              seenMessages.add(key);
+            }
+            return;
+          }
+          // Assistant message
+          const assistantMsg = row.querySelector('.interactive-response .rendered-markdown');
+          if (assistantMsg) {
+            const msgText = assistantMsg.textContent?.trim() ?? "";
+            const key = `assistant:${msgText}`;
+            if (!seenMessages.has(key)) {
+              allMessages.push({ entity: 'assistant', message: msgText });
+              seenMessages.add(key);
+            }
+            return;
+          }
         });
       };
 
@@ -371,7 +394,7 @@ export class VSCodeTool {
       // Scroll and wait for new messages
       while (unchangedScrolls < 3) {
         scrollable.scrollTop += 200;
-        await new Promise(resolve => setTimeout(resolve, 200)); // Playwright's waitForTimeout is not available in browser context
+        await new Promise(resolve => setTimeout(resolve, 200));
         if (scrollable.scrollTop === lastScrollTop) {
           unchangedScrolls++;
         } else {
@@ -384,7 +407,7 @@ export class VSCodeTool {
       collectMessages();
       observer.disconnect();
 
-      return Array.from(allMessages);
+      return allMessages;
     });
     return allMessages;
   }
