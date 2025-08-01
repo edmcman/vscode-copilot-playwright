@@ -1,11 +1,19 @@
 #!/usr/bin/env ts-node
 
 import { VSCodeTool } from './vscode-tool';
+import minimist from 'minimist';
 
 /**
  * Example script showing how to use the VS Code Playwright tool with desktop VS Code
  */
 async function example() {
+  // Parse arguments using minimist
+  const args = minimist(process.argv.slice(2), {
+    string: ['output', 'o'],
+    alias: { output: 'o' },
+    default: { output: undefined }
+  });
+  const outputFile = args.output;
   const vscode = new VSCodeTool();
   
   try {
@@ -19,7 +27,9 @@ async function example() {
     // 3. Take a screenshot
     console.log('📸 Taking screenshot...');
     await vscode.takeScreenshot('desktop-vscode-initial.png');
-    
+
+    const output: { messages?: any[]; dom?: any } = {};
+
     // 4. Test Copilot chat functionality
     console.log('🤖 Testing Copilot chat...');
     const copilotOpened = await vscode.showCopilotChat();
@@ -39,18 +49,25 @@ async function example() {
       // Extract all Copilot chat messages and log them
       console.log('📝 Extracting all Copilot chat messages...');
       const allMessages = await vscode.extractAllChatMessages();
+      output["messages"] = allMessages;
       console.log('All Copilot chat messages:', allMessages);
     } else {
       console.log('⚠️ Copilot chat could not be opened or is not available');
     }
-    
-    // 5. Dump the DOM
-    console.log('📄 Dumping DOM structure...');
-    await vscode.dumpDOM();
-    
-    console.log('\n✅ Demo completed successfully!');
-    console.log('📁 Check the ./output directory for results');
-    
+
+    output["dom"] = await vscode.dumpDOM();
+
+    // If output file argument is provided, write output as JSON
+    if (outputFile) {
+      const fs = require('fs');
+      try {
+        fs.writeFileSync(outputFile, JSON.stringify(output, null, 2), 'utf8');
+        console.log(`✅ Output written to ${outputFile}`);
+      } catch (err) {
+        console.error(`❌ Failed to write output to ${outputFile}:`, err);
+      }
+    }
+
   } catch (error) {
     console.error('❌ Error during demo:', error);
   } finally {

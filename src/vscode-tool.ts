@@ -131,24 +131,8 @@ export class VSCodeTool {
       throw new Error('VS Code not launched. Call launch() first.');
     }
 
-    console.log('Dumping VS Code DOM...');
-    
     // Get the full HTML content
     const htmlContent = await this.page.content();
-    
-    // Create output directory if it doesn't exist
-    const outputDir = path.join(process.cwd(), 'output');
-    if (!fs.existsSync(outputDir)) {
-      fs.mkdirSync(outputDir);
-    }
-
-    // Save DOM to file with timestamp
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const filename = `vscode-dom-${timestamp}.html`;
-    const filepath = path.join(outputDir, filename);
-    
-    fs.writeFileSync(filepath, htmlContent, 'utf8');
-    console.log(`DOM dumped to: ${filepath}`);
 
     return htmlContent;
   }

@@ -8,16 +8,22 @@
     "example": "ts-node src/example.ts",
     "test": "playwright test"
   },
-  "keywords": ["playwright", "vscode", "automation"],
+  "keywords": [
+    "playwright",
+    "vscode",
+    "automation"
+  ],
   "author": "",
   "license": "MIT",
   "devDependencies": {
     "@playwright/test": "^1.40.0",
+    "@types/minimist": "^1.2.5",
     "@types/node": "^20.0.0",
-    "typescript": "^5.0.0",
-    "ts-node": "^10.9.0"
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0"
   },
   "dependencies": {
+    "minimist": "^1.2.8",
     "playwright": "^1.40.0"
   }
 }
