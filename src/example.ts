@@ -9,12 +9,19 @@ import minimist from 'minimist';
 async function example() {
   // Parse arguments using minimist
   const args = minimist(process.argv.slice(2), {
-    string: ['output', 'o', 'model'],
-    alias: { output: 'o', model: 'm' },
-    default: { output: undefined, model: 'GPT-4.1' }
+    string: ['output', 'o', 'model', 'mode', 'prompt'],
+    alias: { output: 'o', model: 'm', mode: 'M', prompt: 'p' },
+    default: {
+      output: undefined,
+      model: 'GPT-4.1',
+      mode: 'Agent',
+      prompt: 'Can you help me write a TypeScript function?'
+    }
   });
   const outputFile = args.output;
   const modelLabel = args.model;
+  const modeLabel = args.mode;
+  const prompt = args.prompt;
   const vscode = new VSCodeTool();
   
   try {
@@ -29,7 +36,7 @@ async function example() {
     console.log('📸 Taking screenshot...');
     await vscode.takeScreenshot('desktop-vscode-initial.png');
 
-    const output: { messages?: any[]; dom?: any } = {};
+    const output: { messages?: any[]; dom?: any; model?: string; mode?: string } = {};
 
     // 4. Test Copilot chat functionality
     console.log('🤖 Testing Copilot chat...');
@@ -39,7 +46,7 @@ async function example() {
       
       // Test writing and sending a chat message
       console.log('💬 Writing and sending a test message...');
-      const messageSuccess = await vscode.sendChatMessage('Can you help me write a TypeScript function?', modelLabel);
+      const messageSuccess = await vscode.sendChatMessage(prompt, modelLabel, modeLabel);
       if (messageSuccess) {
         console.log('✅ Example chat message written and sent successfully!');
       }
@@ -58,6 +65,7 @@ async function example() {
 
     output["dom"] = await vscode.dumpDOM();
     output["model"] = modelLabel;
+    output["mode"] = modeLabel;
 
     // If output file argument is provided, write output as JSON
     if (outputFile) {
@@ -70,8 +78,6 @@ async function example() {
       }
     }
 
-  } catch (error) {
-    console.error('❌ Error during demo:', error);
   } finally {
     // Close the browser
     console.log('🔄 Cleaning up...');

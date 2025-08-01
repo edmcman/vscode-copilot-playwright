@@ -244,16 +244,19 @@ export class VSCodeTool {
   /**
    * Write and send a chat message in one operation
    * @param message The message to write and send
+   * @param modelLabel The Copilot model label (default: 'GPT-4.1')
+   * @param modeLabel The Copilot mode label (default: 'Agent')
    * @returns Promise<boolean> indicating success
    */
-  async sendChatMessage(message: string, modelLabel: string = 'GPT-4.1'): Promise<boolean> {
+  async sendChatMessage(message: string, modelLabel: string = 'GPT-4.1', modeLabel: string = 'Agent'): Promise<boolean> {
     if (!this.page) {
       throw new Error('VS Code not launched. Call launch() first.');
     }
 
-    console.log(`📝 Writing and sending chat message: "${message}" (model: ${modelLabel})`);
+    console.log(`📝 Writing and sending chat message: "${message}" (model: ${modelLabel}, mode: ${modeLabel})`);
 
     await this.pickCopilotModelHelper(modelLabel);
+    await this.pickCopilotModeHelper(modeLabel);
 
     // First write the message - this will throw if it fails
     await this.writeChatMessageHelper(message);
@@ -374,30 +377,36 @@ export class VSCodeTool {
     return allMessages;
   }
 
-  async pickCopilotModelHelper(modelLabel?: string): Promise<void> {
+  private async pickCopilotPickerHelper(pickerAriaLabel: string, optionLabel?: string): Promise<void> {
     if (!this.page) {
       throw new Error('VS Code not launched. Call launch() first.');
     }
 
-    // Locate the model picker button by its class and aria-label
-    const pickerLocator = this.page.locator('a.action-label[aria-label*="Pick Model"]');
+    // Locate the picker button by its class and aria-label
+    const pickerLocator = this.page.locator(`a.action-label[aria-label*="${pickerAriaLabel}"]`);
     await pickerLocator.waitFor({ state: 'visible', timeout: 10000 });
     await pickerLocator.click();
-
-    //this.page.waitForTimeout(1000);
 
     const contextLocator = this.page.locator('div.context-view div.monaco-list');
     await contextLocator.waitFor({ state: 'visible', timeout: 10000 });
 
-    // Find the model option by aria-label and click it
-    const modelOptionLocator = contextLocator.locator(`div.monaco-list-row.action[aria-label="${modelLabel}"]`);
-    await modelOptionLocator.waitFor({ state: 'visible', timeout: 100 });
-    await modelOptionLocator.click({ force: true, timeout: 1000 });
+    // Find the option by aria-label and click it
+    const optionLocator = contextLocator.locator(`div.monaco-list-row.action[aria-label="${optionLabel}"]`);
+    await optionLocator.waitFor({ state: 'visible', timeout: 100 });
+    await optionLocator.click({ force: true, timeout: 1000 });
 
     // Verify selection
-    const selectedModel = await pickerLocator.innerText();
-    if (selectedModel !== modelLabel) {
-      throw new Error(`Tried to select model: ${modelLabel}, but got: ${selectedModel}`);
+    const selected = await pickerLocator.innerText();
+    if (selected !== optionLabel) {
+      throw new Error(`Tried to select ${pickerAriaLabel.toLowerCase()}: ${optionLabel}, but got: ${selected}`);
     }
+  }
+
+  async pickCopilotModelHelper(modelLabel?: string): Promise<void> {
+    await this.pickCopilotPickerHelper('Pick Model', modelLabel);
+  }
+
+  async pickCopilotModeHelper(modeLabel?: string): Promise<void> {
+    await this.pickCopilotPickerHelper('Set Mode', modeLabel);
   }
 }
