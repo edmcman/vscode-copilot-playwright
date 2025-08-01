@@ -192,19 +192,17 @@ export class VSCodeTool {
     }
 
     console.log('Opening Copilot chat window using keyboard shortcut...');
-    
+
     try {
       // Use the keyboard shortcut Ctrl+Alt+I (or Cmd+Alt+I on Mac) to open Copilot chat
       await this.page.keyboard.press('Control+Alt+i');
-      
-      // Verify the Copilot chat window is present using the div.interactive-session selector
+
+      // Use Locator for Copilot chat window
+      const chatLocator = this.page.locator('div.interactive-session');
       console.log('Verifying Copilot chat window presence...');
-      
-      // Wait for the Copilot chat selector - this will throw if not found
-      await this.page.waitForSelector('div.interactive-session', { timeout: 5000 });
+      await chatLocator.waitFor({ state: 'visible', timeout: 5000 });
       console.log('✅ Copilot chat window successfully opened and verified!');
       return true;
-      
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (errorMessage.includes('Timeout') || errorMessage.includes('waiting for selector')) {
