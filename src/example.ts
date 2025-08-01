@@ -9,11 +9,12 @@ import minimist from 'minimist';
 async function example() {
   // Parse arguments using minimist
   const args = minimist(process.argv.slice(2), {
-    string: ['output', 'o'],
-    alias: { output: 'o' },
-    default: { output: undefined }
+    string: ['output', 'o', 'model'],
+    alias: { output: 'o', model: 'm' },
+    default: { output: undefined, model: 'GPT-4.1' }
   });
   const outputFile = args.output;
+  const modelLabel = args.model;
   const vscode = new VSCodeTool();
   
   try {
@@ -38,7 +39,7 @@ async function example() {
       
       // Test writing and sending a chat message
       console.log('💬 Writing and sending a test message...');
-      const messageSuccess = await vscode.sendChatMessage('Can you help me write a TypeScript function?');
+      const messageSuccess = await vscode.sendChatMessage('Can you help me write a TypeScript function?', modelLabel);
       if (messageSuccess) {
         console.log('✅ Example chat message written and sent successfully!');
       }
@@ -56,6 +57,7 @@ async function example() {
     }
 
     output["dom"] = await vscode.dumpDOM();
+    output["model"] = modelLabel;
 
     // If output file argument is provided, write output as JSON
     if (outputFile) {

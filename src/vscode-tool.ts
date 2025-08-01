@@ -246,14 +246,14 @@ export class VSCodeTool {
    * @param message The message to write and send
    * @returns Promise<boolean> indicating success
    */
-  async sendChatMessage(message: string): Promise<boolean> {
+  async sendChatMessage(message: string, modelLabel: string = 'GPT-4.1'): Promise<boolean> {
     if (!this.page) {
       throw new Error('VS Code not launched. Call launch() first.');
     }
 
-    console.log(`📝 Writing and sending chat message: "${message}"`);
-    
-    await this.pickCopilotModelHelper("GPT-4.1");
+    console.log(`📝 Writing and sending chat message: "${message}" (model: ${modelLabel})`);
+
+    await this.pickCopilotModelHelper(modelLabel);
 
     // First write the message - this will throw if it fails
     await this.writeChatMessageHelper(message);
