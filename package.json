@@ -5,8 +5,6 @@
   "main": "index.js",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/vscode-tool.js",
-    "dev": "ts-node src/vscode-tool.ts",
     "example": "ts-node src/example.ts"
   },
   "keywords": ["playwright", "vscode", "automation"],

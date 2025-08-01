@@ -50,7 +50,7 @@ export class VSCodeTool {
       '--disable-features=VizDisplayCompositor',
       '--no-sandbox',
       '--disable-setuid-sandbox',
-      '--new-window' // Force new window
+      //'--new-window' // Force new window
     ];
 
     // Add workspace path if provided
@@ -62,7 +62,7 @@ export class VSCodeTool {
     // Try different VS Code executable names/paths
     const vscodeExecutable = 'code'; // Assume code is in PATH
     
-    console.log(`Using VS Code executable: ${vscodeExecutable}`);
+    console.log(`Executing VS Code: ${vscodeExecutable} ${vscodeArgs.join(' ')}`);
 
     this.vscodeProcess = spawn(vscodeExecutable, vscodeArgs, {
       detached: true,
@@ -298,6 +298,33 @@ export class VSCodeTool {
     }
   }
 
+  async sendChatMessage(): Promise<boolean> {
+    if (!this.page) {
+      throw new Error('VS Code not launched. Call launch() first.');
+    }
+
+    console.log('Sending chat message...');
+    
+    try {
+      // Find the send button
+      const sendButton = await this.page.$('a.action-label.codicon.codicon-send');
+      
+      if (!sendButton) {
+        console.log('❌ Send button not found');
+        return false;
+      }
+
+      // Click the send button
+      await sendButton.click();
+      
+      console.log('✅ Chat message sent successfully!');
+      return true;
+    } catch (error) {
+      console.error('Error sending chat message:', error);
+      return false;
+    }
+  }
+
   async close(): Promise<void> {
     console.log('Closing VS Code tool...');
     
@@ -337,60 +364,4 @@ export class VSCodeTool {
     
     console.log('VS Code tool closed.');
   }
-}
-
-// Main execution function
-async function main() {
-  const vscode = new VSCodeTool();
-  
-  try {
-    // Launch VS Code desktop (you can pass a workspace path as argument)
-    const workspacePath = process.argv[2]; // Optional workspace path from command line
-    await vscode.launch(workspacePath);
-    
-    // Wait a bit for everything to load
-    await new Promise(resolve => setTimeout(resolve, 8000));
-    
-    // Take a screenshot
-    await vscode.takeScreenshot('desktop-vscode.png');
-    
-    // Analyze workbench structure
-    await vscode.getWorkbenchElements();
-    
-    // Try to open Copilot chat and verify it's present
-    console.log('\n🤖 Testing Copilot chat functionality...');
-    const copilotSuccess = await vscode.showCopilotChat();
-    if (copilotSuccess) {
-      console.log('✅ Copilot chat opened successfully!');
-      
-      // Try to write a chat message
-      console.log('\n💬 Testing chat message writing...');
-      const messageSuccess = await vscode.writeChatMessage('Hello, can you help me with TypeScript?');
-      if (messageSuccess) {
-        console.log('✅ Chat message written successfully!');
-      }
-      
-      // Take a screenshot to show the Copilot chat with message
-      await vscode.takeScreenshot('desktop-vscode-with-copilot.png');
-    } else {
-      console.log('⚠️ Copilot chat could not be opened or verified');
-    }
-    
-    // Dump the DOM
-    await vscode.dumpDOM();
-    
-    console.log('✅ VS Code desktop tool execution completed successfully!');
-    console.log('Check the ./output directory for screenshots and DOM dump.');
-    
-  } catch (error) {
-    console.error('❌ Error:', error);
-  } finally {
-    // Keep the VS Code instance open for inspection (comment out the next line to keep it open)
-    await vscode.close();
-  }
-}
-
-// Run if this file is executed directly
-if (require.main === module) {
-  main().catch(console.error);
 }

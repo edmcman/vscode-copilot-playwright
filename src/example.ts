@@ -35,6 +35,7 @@ async function example() {
       const messageWritten = await vscode.writeChatMessage('Can you help me write a TypeScript function?');
       if (messageWritten) {
         console.log('✅ Example chat message written successfully!');
+        await vscode.sendChatMessage();
       }
       
       // Take a screenshot with Copilot chat open and message written
