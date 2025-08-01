@@ -254,17 +254,17 @@ export class VSCodeTool {
       // Verify the Copilot chat window is present using the div.interactive-session selector
       console.log('Verifying Copilot chat window presence...');
       
-      try {
-        await this.page.waitForSelector('div.interactive-session', { timeout: 5000 });
-        console.log('✅ Copilot chat window successfully opened and verified!');
-        return true;
-      } catch (error) {
-        console.log('❌ Copilot chat window not found with div.interactive-session selector');
-        return false;
-      }
+      // Wait for the Copilot chat selector - this will throw if not found
+      await this.page.waitForSelector('div.interactive-session', { timeout: 5000 });
+      console.log('✅ Copilot chat window successfully opened and verified!');
+      return true;
+      
     } catch (error) {
-      console.error('Error opening Copilot chat:', error);
-      return false;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('Timeout') || errorMessage.includes('waiting for selector')) {
+        throw new Error(`Failed to open Copilot chat: Selector 'div.interactive-session' not found. This might indicate Copilot is not available or the interface has changed.`);
+      }
+      throw error;
     }
   }
 
@@ -283,18 +283,19 @@ export class VSCodeTool {
       const inputElement = await this.page.waitForSelector('div.chat-editor-container', { timeout: 1000 });
       
       if (!inputElement) {
-        console.log('❌ Chat input element not found');
-        return false;
+        throw new Error('Chat input element not found: div.chat-editor-container selector failed');
       }
 
       // Focus and fill the textarea with the message
-      //await inputElement.click();
       await inputElement.type(message);
       
       return true;
     } catch (error) {
-      console.error('Error writing chat message:', error);
-      return false;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('Timeout') || errorMessage.includes('waiting for selector')) {
+        throw new Error(`Failed to write chat message: Required chat UI elements not found. ${errorMessage}`);
+      }
+      throw error;
     }
   }
 
@@ -307,11 +308,10 @@ export class VSCodeTool {
     
     try {
       // Find the send button
-      const sendButton = await this.page.waitForSelector('a.action-label.codicon.codicon-send');
+      const sendButton = await this.page.waitForSelector('a.action-label.codicon.codicon-send', { timeout: 1000 });
 
       if (!sendButton) {
-        console.log('❌ Send button not found');
-        return false;
+        throw new Error('Send button not found: a.action-label.codicon.codicon-send selector failed');
       }
 
       // Click the send button
@@ -320,8 +320,11 @@ export class VSCodeTool {
       console.log('✅ Chat message sent successfully!');
       return true;
     } catch (error) {
-      console.error('Error sending chat message:', error);
-      return false;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('Timeout') || errorMessage.includes('waiting for selector')) {
+        throw new Error(`Failed to send chat message: Send button not found. ${errorMessage}`);
+      }
+      throw error;
     }
   }
 
