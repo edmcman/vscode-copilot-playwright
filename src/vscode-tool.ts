@@ -253,6 +253,8 @@ export class VSCodeTool {
 
     console.log(`📝 Writing and sending chat message: "${message}"`);
     
+    await this.pickCopilotModelHelper("GPT-4.1");
+
     // First write the message - this will throw if it fails
     await this.writeChatMessageHelper(message);
 
@@ -370,5 +372,32 @@ export class VSCodeTool {
       return allMessages;
     });
     return allMessages;
+  }
+
+  async pickCopilotModelHelper(modelLabel?: string): Promise<void> {
+    if (!this.page) {
+      throw new Error('VS Code not launched. Call launch() first.');
+    }
+
+    // Locate the model picker button by its class and aria-label
+    const pickerLocator = this.page.locator('a.action-label[aria-label*="Pick Model"]');
+    await pickerLocator.waitFor({ state: 'visible', timeout: 10000 });
+    await pickerLocator.click();
+
+    //this.page.waitForTimeout(1000);
+
+    const contextLocator = this.page.locator('div.context-view div.monaco-list');
+    await contextLocator.waitFor({ state: 'visible', timeout: 10000 });
+
+    // Find the model option by aria-label and click it
+    const modelOptionLocator = contextLocator.locator(`div.monaco-list-row.action[aria-label="${modelLabel}"]`);
+    await modelOptionLocator.waitFor({ state: 'visible', timeout: 100 });
+    await modelOptionLocator.click({ force: true, timeout: 1000 });
+
+    // Verify selection
+    const selectedModel = await pickerLocator.innerText();
+    if (selectedModel !== modelLabel) {
+      throw new Error(`Tried to select model: ${modelLabel}, but got: ${selectedModel}`);
+    }
   }
 }
