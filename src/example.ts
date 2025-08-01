@@ -30,9 +30,9 @@ async function example() {
     if (copilotOpened) {
       console.log('✅ Copilot chat opened and verified successfully!');
       
-      // Test writing and sending a chat message using the helper function
+      // Test writing and sending a chat message
       console.log('💬 Writing and sending a test message...');
-      const messageSuccess = await vscode.sendChatMessageWithText('Can you help me write a TypeScript function?');
+      const messageSuccess = await vscode.sendChatMessage('Can you help me write a TypeScript function?');
       if (messageSuccess) {
         console.log('✅ Example chat message written and sent successfully!');
       }

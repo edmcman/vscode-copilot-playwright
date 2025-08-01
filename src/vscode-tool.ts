@@ -268,7 +268,7 @@ export class VSCodeTool {
     }
   }
 
-  async writeChatMessage(message: string): Promise<boolean> {
+  async writeChatMessageHelper(message: string): Promise<boolean> {
     if (!this.page) {
       throw new Error('VS Code not launched. Call launch() first.');
     }
@@ -298,7 +298,7 @@ export class VSCodeTool {
     }
   }
 
-  async sendChatMessage(): Promise<boolean> {
+  async sendChatMessageHelper(): Promise<boolean> {
     if (!this.page) {
       throw new Error('VS Code not launched. Call launch() first.');
     }
@@ -326,11 +326,11 @@ export class VSCodeTool {
   }
 
   /**
-   * Helper function to write and send a chat message in one operation
+   * Write and send a chat message in one operation
    * @param message The message to write and send
    * @returns Promise<boolean> indicating success
    */
-  async sendChatMessageWithText(message: string): Promise<boolean> {
+  async sendChatMessage(message: string): Promise<boolean> {
     if (!this.page) {
       throw new Error('VS Code not launched. Call launch() first.');
     }
@@ -339,14 +339,14 @@ export class VSCodeTool {
     
     try {
       // First write the message
-      const written = await this.writeChatMessage(message);
+      const written = await this.writeChatMessageHelper(message);
       if (!written) {
         console.log('❌ Failed to write chat message');
         return false;
       }
 
       // Then send it
-      const sent = await this.sendChatMessage();
+      const sent = await this.sendChatMessageHelper();
       if (!sent) {
         console.log('❌ Failed to send chat message');
         return false;
@@ -355,7 +355,7 @@ export class VSCodeTool {
       console.log('✅ Chat message written and sent successfully!');
       return true;
     } catch (error) {
-      console.error('Error in sendChatMessageWithText:', error);
+      console.error('Error in sendChatMessage:', error);
       return false;
     }
   }
