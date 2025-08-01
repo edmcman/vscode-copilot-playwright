@@ -176,15 +176,6 @@ export class VSCodeTool {
     return filepath;
   }
 
-  async waitForElement(selector: string, timeout: number = 10000): Promise<void> {
-    if (!this.page) {
-      throw new Error('VS Code not launched. Call launch() first.');
-    }
-
-    console.log(`Waiting for element: ${selector}`);
-    await this.page.waitForSelector(selector, { timeout });
-    console.log(`Element found: ${selector}`);
-  }
 
   async showCopilotChat(): Promise<boolean> {
     if (!this.page) {
