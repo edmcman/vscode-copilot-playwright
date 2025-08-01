@@ -63,7 +63,7 @@ async function example() {
       console.log('⚠️ Copilot chat could not be opened or is not available');
     }
 
-    output["dom"] = await vscode.dumpDOM();
+    // output["dom"] = await vscode.dumpDOM();
     output["model"] = modelLabel;
     output["mode"] = modeLabel;
 
