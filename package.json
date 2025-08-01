@@ -5,12 +5,14 @@
   "main": "index.js",
   "scripts": {
     "build": "tsc",
-    "example": "ts-node src/example.ts"
+    "example": "ts-node src/example.ts",
+    "test": "playwright test"
   },
   "keywords": ["playwright", "vscode", "automation"],
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "@playwright/test": "^1.40.0",
     "@types/node": "^20.0.0",
     "typescript": "^5.0.0",
     "ts-node": "^10.9.0"
