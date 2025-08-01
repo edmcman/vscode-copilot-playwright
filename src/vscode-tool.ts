@@ -220,21 +220,13 @@ export class VSCodeTool {
     }
 
     console.log(`Writing chat message: "${message}"`);
-    
-    try {
-      // Wait for the chat input container to be available
-      await this.page.waitForSelector('div.chat-input-container', { timeout: 1000 });
-      
-      // Find the input element within the chat editor container
-      const inputElement = await this.page.waitForSelector('div.chat-editor-container', { timeout: 1000 });
-      
-      if (!inputElement) {
-        throw new Error('Chat input element not found: div.chat-editor-container selector failed');
-      }
 
-      // Focus and fill the textarea with the message
-      await inputElement.type(message);
-      
+    try {
+      // Use Locator for the chat input container
+      const inputLocator = this.page.locator('div.chat-editor-container');
+      await inputLocator.waitFor({ state: 'visible', timeout: 1000 });
+      // Type the message using Locator API
+      await inputLocator.type(message);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (errorMessage.includes('Timeout') || errorMessage.includes('waiting for selector')) {
