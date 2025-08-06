@@ -39,7 +39,7 @@ class VSCodeTool:
             print(f"Opening workspace: {workspace_path}")
         vscode_executable = "code"
         print(f"Executing VS Code: {vscode_executable} {' '.join(vscode_args)}")
-        self.vscode_process = Popen([vscode_executable] + vscode_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.vscode_process = subprocess.Popen([vscode_executable] + vscode_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def _wait_for_vscode_to_start(self):
         print("Waiting for VS Code to start...")
@@ -156,7 +156,7 @@ class VSCodeTool:
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         return self.page.evaluate("""
-        () => {
+        (async () => {
             const session = document.querySelector('div.interactive-session');
             if (!session) return [];
             const scrollable = session.querySelector('div.interactive-list div.monaco-list div.monaco-scrollable-element');
@@ -207,7 +207,7 @@ class VSCodeTool:
             collectMessages();
             observer.disconnect();
             return allMessages;
-        }
+        })()
         """)
 
     def pick_copilot_picker_helper(self, picker_aria_label, option_label=None):

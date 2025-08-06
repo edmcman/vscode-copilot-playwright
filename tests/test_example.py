@@ -1,7 +1,6 @@
 import subprocess
 import sys
 import os
-import pytest
 
 def test_example_script_runs_successfully():
     project_root = os.path.abspath(os.path.dirname(__file__))
