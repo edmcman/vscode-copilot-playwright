@@ -164,6 +164,16 @@ class VSCodeTool:
                 self.vscode_process.wait()
         print('VS Code tool closed.')
 
+    def is_chat_loading(self):
+        """
+        Lightweight check for chat loading spinner presence.
+        Returns True if chat is loading, False otherwise.
+        """
+        assert self.page is not None, "VS Code not launched. Call launch() first."
+        return self.page.evaluate("""
+            !!document.querySelector('div.chat-response-loading')
+        """)
+
     def _extract_chat_messages_helper(self):
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
@@ -214,27 +224,22 @@ class VSCodeTool:
         Extract all chat messages, handling confirmation and loading in a loop until complete.
         Handles confirmation prompts and waits for loading to finish using Playwright.
         """
+
         assert self.page is not None, "VS Code not launched. Call launch() first."
-        loading = True
-        while loading:
+        while self.is_chat_loading():
             result = self._extract_chat_messages_helper()
-            messages = result.get('messages', [])
-            loading = result.get('loading', False)
-            confirmation = result.get('confirmation', False)
-            
+            confirmation = result.get('confirmation')
+
             if confirmation:
                 print("Confirmation prompt detected, clicking Continue...")
                 self.page.locator('a.monaco-button[aria-label^="Continue"]').click()
-                # After clicking, loop will re-extract
-                continue
-            if loading:
-                print("Waiting for chat response to finish loading...")
-                self.page.wait_for_selector('div.chat-response-loading', state='detached')
-                # After loading finishes, loop will re-extract
                 continue
 
-            # Neither loading nor confirmation: extraction complete
-            return messages
+            print("Waiting for chat response to finish loading...")
+            self.page.wait_for_selector('div.chat-response-loading', state='detached')
+
+        # Neither loading nor confirmation: extraction complete
+        return self._extract_chat_messages_helper().get('messages')
 
     def pick_copilot_picker_helper(self, picker_aria_label, option_label=None):
         if not self.page:
