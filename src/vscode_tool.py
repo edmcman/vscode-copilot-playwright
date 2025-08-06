@@ -164,87 +164,77 @@ class VSCodeTool:
                 self.vscode_process.wait()
         print('VS Code tool closed.')
 
-    def extract_all_chat_messages(self):
+    def _extract_chat_messages_helper(self):
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
+        # Only extract messages and confirmation state, no waiting or clicking
         return self.page.evaluate("""
-        (async () => {
+        (() => {
             const session = document.querySelector('div.interactive-session');
-            if (!session) return [];
+            if (!session) return { messages: [], loading: false, confirmation: false };
             const scrollable = session.querySelector('div.interactive-list div.monaco-list div.monaco-scrollable-element');
-            if (!scrollable) return [];
+            if (!scrollable) return { messages: [], loading: false, confirmation: false };
             const rowsContainer = scrollable.querySelector('div.monaco-list-rows');
-            if (!rowsContainer) return [];
+            if (!rowsContainer) return { messages: [], loading: false, confirmation: false };
             let allMessages = [];
-            const seenMessages = new Set();
-            const collectMessages = () => {
-                const rows = rowsContainer.querySelectorAll('div.monaco-list-row');
-                rows.forEach(row => {
-                    console.log("Processing row:", row.outerHTML);
-                    const rowId = row.getAttribute('id');
-                    if (!rowId) return;
-                    if (seenMessages.has(rowId)) return;
-                    // User message
-                    const userMsg = row.querySelector('.interactive-request > .value > .rendered-markdown');
-                    if (userMsg) {
-                        console.log("User message found:", userMsg.textContent);
-                        const msgText = userMsg.textContent?.trim() ?? "";
-                        allMessages.push({ entity: 'user', message: msgText });
-                        seenMessages.add(rowId);
-                        return;
-                    }
-                    // Assistant message
-                    const assistantMsg = row.querySelector('.interactive-response > .value > .rendered-markdown');
-                    if (assistantMsg) {
-                        console.log("Assistant message found:", assistantMsg.outerHTML);
-                        const msgText = assistantMsg.textContent?.trim() ?? "";
-                        allMessages.push({ entity: 'assistant', message: msgText });
-                        seenMessages.add(rowId);
-                        return;
-                    }
-                    // Confirmation prompt
-                    const confirmationWidget = row.querySelector('.interactive-response > .value .chat-confirmation-widget');
-                    if (confirmationWidget) {
-                        const confirmationTitle = confirmationWidget.querySelector('.chat-confirmation-widget-title .rendered-markdown');
-                        let confirmationText = confirmationTitle ? confirmationTitle.textContent?.trim() ?? "" : "";
-                        if (confirmationText) {
-                            allMessages.push({ entity: 'confirmation', message: confirmationText });
-                        }
-                        seenMessages.add(rowId);
-                        // Click Continue button!
-                        const continueButton = confirmationWidget.querySelector('a.monaco-button[aria-label^="Continue"]');
-                        if (continueButton) {                            
-                            continueButton.click();
-                        }
-                        return;
-                    }
-                    console.log("Unknown row type:", row.outerHTML);
-                });
-            };
-            let observer = new MutationObserver(() => {
-                collectMessages();
-            });
-            observer.observe(rowsContainer, { childList: true, subtree: true });
-            collectMessages();
-            let lastScrollTop = -1;
-            let unchangedScrolls = 0;
-            while (unchangedScrolls < 3) {
-                scrollable.scrollTop += 200;
-                // XXX we should detect commands/messages in progress here.
-                // .chat-response-loading
-                await new Promise(resolve => setTimeout(resolve, 200));
-                if (scrollable.scrollTop === lastScrollTop) {
-                    unchangedScrolls++;
-                } else {
-                    unchangedScrolls = 0;
-                    lastScrollTop = scrollable.scrollTop;
+            const rows = rowsContainer.querySelectorAll('div.monaco-list-row');
+            let confirmationFound = false;
+            rows.forEach(row => {
+                // User message
+                const userMsg = row.querySelector('.interactive-request > .value > .rendered-markdown');
+                if (userMsg) {
+                    allMessages.push({ entity: 'user', message: userMsg.textContent?.trim() ?? "" });
+                    return;
                 }
-            }
-            collectMessages();
-            observer.disconnect();
-            return allMessages;
+                // Assistant message
+                const assistantMsg = row.querySelector('.interactive-response > .value > .rendered-markdown');
+                if (assistantMsg) {
+                    allMessages.push({ entity: 'assistant', message: assistantMsg.textContent?.trim() ?? "" });
+                    return;
+                }
+                // Confirmation prompt
+                const confirmationWidget = row.querySelector('.interactive-response > .value .chat-confirmation-widget');
+                if (confirmationWidget) {
+                    const confirmationTitle = confirmationWidget.querySelector('.chat-confirmation-widget-title .rendered-markdown');
+                    let confirmationText = confirmationTitle ? confirmationTitle.textContent?.trim() ?? "" : "";
+                    if (confirmationText) {
+                        allMessages.push({ entity: 'confirmation', message: confirmationText });
+                    }
+                    confirmationFound = true;
+                    return;
+                }
+            });
+            const loading = !!document.querySelector('div.chat-response-loading');
+            return { messages: allMessages, loading, confirmation: confirmationFound };
         })()
         """)
+
+    def extract_all_chat_messages(self):
+        """
+        Extract all chat messages, handling confirmation and loading in a loop until complete.
+        Handles confirmation prompts and waits for loading to finish using Playwright.
+        """
+        assert self.page is not None, "VS Code not launched. Call launch() first."
+        loading = True
+        while loading:
+            result = self._extract_chat_messages_helper()
+            messages = result.get('messages', [])
+            loading = result.get('loading', False)
+            confirmation = result.get('confirmation', False)
+            
+            if confirmation:
+                print("Confirmation prompt detected, clicking Continue...")
+                self.page.locator('a.monaco-button[aria-label^="Continue"]').click()
+                # After clicking, loop will re-extract
+                continue
+            if loading:
+                print("Waiting for chat response to finish loading...")
+                self.page.wait_for_selector('div.chat-response-loading', state='detached')
+                # After loading finishes, loop will re-extract
+                continue
+
+            # Neither loading nor confirmation: extraction complete
+            return messages
 
     def pick_copilot_picker_helper(self, picker_aria_label, option_label=None):
         if not self.page:
