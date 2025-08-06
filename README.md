@@ -14,34 +14,27 @@ A Playwright-based tool for interacting with desktop VS Code and analyzing its D
 
 ## Requirements
 
-- VS Code desktop installed and available in PATH as `code`
-- Node.js and npm
-- Playwright
+- Python 3.10+
+- Playwright for Python
 
 ## Installation
 
 1. Install dependencies:
 ```bash
-npm install
+pip install -r requirements.txt
+python -m playwright install
 ```
 
 ## Usage
 
 ### Run the tool directly:
 ```bash
-npm run dev
-
-# Or with a specific workspace:
-npm run dev /path/to/your/workspace
+python example.py --output output.json --model GPT-4.1 --mode Agent --prompt "Your prompt here"
 ```
 
-### Build and run:
+### Run tests:
 ```bash
-npm run build
-npm start
-
-# Or with a workspace:
-npm start /path/to/your/workspace
+pytest test_example.py
 ```
 
 ## Output
@@ -54,31 +47,13 @@ The tool creates an `output` directory containing:
 
 The `VSCodeTool` class provides the following methods:
 
-- `launch(workspacePath?)` - Launch desktop VS Code with optional workspace
+- `launch(workspacePath=None)` - Launch desktop VS Code with optional workspace
 - `dumpDOM()` - Extract and save the complete DOM
-- `getWorkbenchElements()` - Analyze VS Code UI components
-- `takeScreenshot(filename?)` - Capture a screenshot
-- `waitForElement(selector, timeout?)` - Wait for an element to appear
+- `takeScreenshot(filename=None)` - Capture a screenshot
+- `showCopilotChat()` - Open Copilot chat
+- `sendChatMessage(message, modelLabel='GPT-4.1', modeLabel='Agent')` - Send a chat message
+- `extractAllChatMessages()` - Extract all chat messages
 - `close()` - Close the browser connection and VS Code process
-
-## Example Usage
-
-```typescript
-import { VSCodeTool } from './src/vscode-tool';
-
-const vscode = new VSCodeTool();
-
-try {
-  // Launch with a specific workspace
-  await vscode.launch('/path/to/your/workspace');
-  
-  await vscode.takeScreenshot();
-  await vscode.dumpDOM();
-  await vscode.getWorkbenchElements();
-} finally {
-  await vscode.close();
-}
-```
 
 ## How It Works
 
