@@ -25,5 +25,37 @@
   "dependencies": {
     "minimist": "^1.2.8",
     "playwright": "^1.40.0"
-  }
+  },
+  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
+}
+
+{
+  "name": "vscode-copilot-playwright",
+  "version": "1.0.0",
+  "description": "Playwright tool for interacting with VS Code",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "example": "ts-node src/example.ts",
+    "test": "playwright test"
+  },
+  "keywords": [
+    "playwright",
+    "vscode",
+    "automation"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "@types/minimist": "^1.2.5",
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "minimist": "^1.2.8",
+    "playwright": "^1.40.0"
+  },
+  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
 }

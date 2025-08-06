@@ -1,3 +1,42 @@
+# VS Code Desktop Playwright Tool (Python Version)
+A Playwright-based tool for interacting with desktop VS Code and analyzing its DOM structure, now using Python Playwright.
+## Features
+- Connect Playwright (Python) to a Chromium browser simulating VS Code desktop
+- Take screenshots of the VS Code homepage
+- Example test using pytest
+## Requirements
+- Python 3.10+
+- Playwright (Python)
+- pytest
+## Installation
+
+1. Install dependencies:
+```fish
+python -m venv .venv
+source .venv/bin/activate.fish
+pip install playwright pytest
+playwright install
+```
+## Usage
+
+### Run the example script:
+```fish
+python src/example.py --output output/desktop-vscode-initial.png
+```
+
+### Run tests:
+```fish
+pytest
+```
+
+## Project Structure
+- `src/vscode_tool.py`: Main tool class for browser automation
+- `src/example.py`: Example script using the tool
+- `tests/example_test.py`: Pytest-based test for the example script
+
+## Notes
+- This project was converted from the Node.js/TypeScript version to Python Playwright.
+- All Playwright automation now uses Python.
 # VS Code Desktop Playwright Tool
 
 A Playwright-based tool for interacting with desktop VS Code and analyzing its DOM structure.
