@@ -5,7 +5,7 @@ import pytest
 
 def test_example_script_runs_successfully():
     project_root = os.path.abspath(os.path.dirname(__file__))
-    script_path = os.path.join(project_root, '../src/example.py')
+    script_path = os.path.join(os.path.dirname(project_root), 'src', 'example.py')
     result = subprocess.run([sys.executable, script_path], capture_output=True, text=True)
     print('STDOUT:', result.stdout)
     if result.stderr:

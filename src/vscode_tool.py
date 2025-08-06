@@ -3,7 +3,7 @@ import time
 import json
 import shutil
 from pathlib import Path
-from subprocess import Popen
+import subprocess
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 class VSCodeTool:
@@ -39,7 +39,7 @@ class VSCodeTool:
             print(f"Opening workspace: {workspace_path}")
         vscode_executable = "code"
         print(f"Executing VS Code: {vscode_executable} {' '.join(vscode_args)}")
-        self.vscode_process = Popen([vscode_executable] + vscode_args, stdout=open(os.devnull, 'wb'), stderr=open(os.devnull, 'wb'))
+        self.vscode_process = Popen([vscode_executable] + vscode_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def _wait_for_vscode_to_start(self):
         print("Waiting for VS Code to start...")
@@ -196,7 +196,7 @@ class VSCodeTool:
             let unchangedScrolls = 0;
             while (unchangedScrolls < 3) {
                 scrollable.scrollTop += 200;
-                setTimeout(() => {}, 200);
+                await new Promise(resolve => setTimeout(resolve, 200));
                 if (scrollable.scrollTop === lastScrollTop) {
                     unchangedScrolls++;
                 } else {
