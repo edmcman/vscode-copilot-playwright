@@ -1,7 +1,5 @@
-import os
+import requests
 import time
-import json
-import shutil
 from pathlib import Path
 import subprocess
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
@@ -43,7 +41,6 @@ class VSCodeTool:
 
     def _wait_for_vscode_to_start(self):
         print("Waiting for VS Code to start...")
-        import requests
         for _ in range(30):
             try:
                 response = requests.get(f"http://localhost:{self.vscode_port}/json/version")
@@ -57,8 +54,8 @@ class VSCodeTool:
 
     def _connect_to_vscode(self):
         print("Connecting Playwright to VS Code...")
-        playwright = sync_playwright().start()
-        self.browser = playwright.chromium.connect_over_cdp(f"http://localhost:{self.vscode_port}")
+        self.playwright = sync_playwright().start()
+        self.browser = self.playwright.chromium.connect_over_cdp(f"http://localhost:{self.vscode_port}")
         contexts = self.browser.contexts
         if not contexts:
             raise RuntimeError("No VS Code contexts found")
@@ -146,10 +143,20 @@ class VSCodeTool:
                 self.browser.close()
             except Exception as e:
                 print('Error closing browser connection:', e)
+        if self.playwright:
+            try:
+                self.playwright.stop()
+            except Exception as e:
+                print('Error stopping Playwright:', e)
         if self.vscode_process and self.vscode_process.poll() is None:
             print('Closing VS Code process...')
             self.vscode_process.terminate()
-            time.sleep(2)
+            try:
+                self.vscode_process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                print('VS Code process did not exit after SIGTERM, sending SIGKILL...')
+                self.vscode_process.kill()
+                self.vscode_process.wait()
         print('VS Code tool closed.')
 
     def extract_all_chat_messages(self):
