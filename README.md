@@ -17,22 +17,38 @@ A Playwright-based tool for interacting with desktop VS Code and analyzing its D
 - Python 3.10+
 - Playwright for Python
 
+
 ## Installation
 
-1. Install dependencies:
+Install via pip (from the project root):
 ```bash
-pip install -r requirements.txt
-python -m playwright install
+pip install .
+playwright install
 ```
 
 ## Usage
 
-### Run the tool directly:
+
+## Usage as a Library
+
+Import and use the VSCodeTool class:
+```python
+from vscode_tool import VSCodeTool
+
+tool = VSCodeTool()
+tool.launch('/path/to/workspace')
+# ... use other methods ...
+tool.close()
+```
+
+## Usage as a Script
+
+Run the example script directly:
 ```bash
 python src/example.py --output output.json --model GPT-4.1 --mode Agent --prompt "Your prompt here"
 ```
 
-### Run tests:
+## Run tests
 ```bash
 pytest tests/
 ```
