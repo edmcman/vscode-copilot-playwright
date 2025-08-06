@@ -64,6 +64,11 @@ class VSCodeTool:
         if not pages:
             raise RuntimeError("No VS Code pages found")
         self.page = pages[0]
+        # Add browser console log handler for debugging page.evaluate
+        def handle_console_msg(msg):
+            print(f"[Browser Console][{msg.type}] {msg.text}")
+        # Uncomment the next line to enable console logging
+        # self.page.on("console", handle_console_msg)
         try:
             self.page.wait_for_selector('.monaco-workbench', timeout=30000)
         except PlaywrightTimeoutError:
@@ -175,23 +180,45 @@ class VSCodeTool:
             const collectMessages = () => {
                 const rows = rowsContainer.querySelectorAll('div.monaco-list-row');
                 rows.forEach(row => {
+                    console.log("Processing row:", row.outerHTML);
                     const rowId = row.getAttribute('id');
                     if (!rowId) return;
                     if (seenMessages.has(rowId)) return;
-                    const userMsg = row.querySelector('.interactive-request .rendered-markdown');
+                    // User message
+                    const userMsg = row.querySelector('.interactive-request > .value > .rendered-markdown');
                     if (userMsg) {
+                        console.log("User message found:", userMsg.textContent);
                         const msgText = userMsg.textContent?.trim() ?? "";
                         allMessages.push({ entity: 'user', message: msgText });
                         seenMessages.add(rowId);
                         return;
                     }
-                    const assistantMsg = row.querySelector('.interactive-response .rendered-markdown');
+                    // Assistant message
+                    const assistantMsg = row.querySelector('.interactive-response > .value > .rendered-markdown');
                     if (assistantMsg) {
+                        console.log("Assistant message found:", assistantMsg.outerHTML);
                         const msgText = assistantMsg.textContent?.trim() ?? "";
                         allMessages.push({ entity: 'assistant', message: msgText });
                         seenMessages.add(rowId);
                         return;
                     }
+                    // Confirmation prompt
+                    const confirmationWidget = row.querySelector('.interactive-response > .value .chat-confirmation-widget');
+                    if (confirmationWidget) {
+                        const confirmationTitle = confirmationWidget.querySelector('.chat-confirmation-widget-title .rendered-markdown');
+                        let confirmationText = confirmationTitle ? confirmationTitle.textContent?.trim() ?? "" : "";
+                        if (confirmationText) {
+                            allMessages.push({ entity: 'confirmation', message: confirmationText });
+                        }
+                        seenMessages.add(rowId);
+                        // Click Continue button!
+                        const continueButton = confirmationWidget.querySelector('a.monaco-button[aria-label^="Continue"]');
+                        if (continueButton) {                            
+                            continueButton.click();
+                        }
+                        return;
+                    }
+                    console.log("Unknown row type:", row.outerHTML);
                 });
             };
             let observer = new MutationObserver(() => {
@@ -203,6 +230,8 @@ class VSCodeTool:
             let unchangedScrolls = 0;
             while (unchangedScrolls < 3) {
                 scrollable.scrollTop += 200;
+                // XXX we should detect commands/messages in progress here.
+                // .chat-response-loading
                 await new Promise(resolve => setTimeout(resolve, 200));
                 if (scrollable.scrollTop === lastScrollTop) {
                     unchangedScrolls++;
