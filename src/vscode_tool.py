@@ -13,7 +13,7 @@ class VSCodeTool:
         self.page = None
         self.vscode_process = None
         self.vscode_port = 9222
-        self.user_data_dir = Path(__file__).parent / ".vscode-playwright-data"
+        self.user_data_dir = Path(__file__).parent.parent / ".vscode-playwright-data"
         print(f"Using persistent VS Code user data directory: {self.user_data_dir}")
 
     def launch(self, workspace_path=None):
