@@ -29,12 +29,12 @@ python -m playwright install
 
 ### Run the tool directly:
 ```bash
-python example.py --output output.json --model GPT-4.1 --mode Agent --prompt "Your prompt here"
+python src/example.py --output output.json --model GPT-4.1 --mode Agent --prompt "Your prompt here"
 ```
 
 ### Run tests:
 ```bash
-pytest test_example.py
+pytest tests/
 ```
 
 ## Output
