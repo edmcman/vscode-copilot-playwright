@@ -9,14 +9,14 @@ def main():
     parser.add_argument('--model', '-m', type=str, default='GPT-4.1')
     parser.add_argument('--mode', '-M', type=str, default='Agent')
     parser.add_argument('--prompt', '-p', type=str, default='Can you help me write a TypeScript function?')
+    parser.add_argument('--workspace', '-w', type=str, default=None, help='Path to VS Code workspace or folder')
     args = parser.parse_args()
 
     output = {}
-    vscode = AutoVSCodeCopilot()
+    vscode = AutoVSCodeCopilot(workspace_path=args.workspace)
     try:
         print('🚀 Starting VS Code Playwright Tool Demo (Desktop)')
-        print('\n📂 Launching VS Code desktop...')
-        vscode.launch()
+        print(f'\n📂 Launching VS Code desktop (workspace: {args.workspace})...')
         print('📸 Taking screenshot...')
         vscode.take_screenshot('desktop-vscode-initial.png')
         print('🤖 Testing Copilot chat...')

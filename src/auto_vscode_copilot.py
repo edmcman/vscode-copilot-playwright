@@ -4,8 +4,9 @@ from pathlib import Path
 import subprocess
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
+
 class AutoVSCodeCopilot:
-    def __init__(self):
+    def __init__(self, workspace_path=None):
         self.browser = None
         self.context = None
         self.page = None
@@ -13,8 +14,6 @@ class AutoVSCodeCopilot:
         self.vscode_port = 9222
         self.user_data_dir = Path(__file__).parent.parent / ".vscode-playwright-data"
         print(f"Using persistent VS Code user data directory: {self.user_data_dir}")
-
-    def launch(self, workspace_path=None):
         print("Launching VS Code desktop with remote debugging...")
         self._launch_vscode(workspace_path)
         self._wait_for_vscode_to_start()

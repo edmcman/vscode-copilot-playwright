@@ -31,12 +31,12 @@ playwright install
 
 ## Usage as a Library
 
+
 Import and use the AutoVSCodeCopilot class:
 ```python
 from auto_vscode_copilot import AutoVSCodeCopilot
 
-tool = AutoVSCodeCopilot()
-tool.launch('/path/to/workspace')
+tool = AutoVSCodeCopilot(workspace_path='/path/to/workspace')
 # ... use other methods ...
 tool.close()
 ```
@@ -64,7 +64,7 @@ The tool creates an `output` directory containing:
 
 The `AutoVSCodeCopilot` class provides the following methods:
 
-- `launch(workspacePath=None)` - Launch desktop VS Code with optional workspace
+
 - `dumpDOM()` - Extract and save the complete DOM
 - `takeScreenshot(filename=None)` - Capture a screenshot
 - `showCopilotChat()` - Open Copilot chat
@@ -74,7 +74,7 @@ The `AutoVSCodeCopilot` class provides the following methods:
 
 ## How It Works
 
-1. **Launches VS Code** with `--remote-debugging-port` and `--user-data-dir` for isolation
+1. **Launches VS Code automatically** with `--remote-debugging-port` and `--user-data-dir` for isolation when you instantiate the class
 2. **Waits for the debugging port** to become available
 3. **Connects Playwright** to the VS Code Electron process via CDP (Chrome DevTools Protocol)
 4. **Interacts with VS Code** as if it were a web page
