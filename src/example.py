@@ -28,21 +28,16 @@ def main():
         logger.info(f'📂 Launching VS Code desktop (workspace: {args.workspace})...')
         logger.info('📸 Taking screenshot...')
         vscode.take_screenshot('desktop-vscode-initial.png')
-        logger.info('🤖 Testing Copilot chat...')
-        copilot_opened = vscode.show_copilot_chat()
-        if copilot_opened:
-            logger.info('✅ Copilot chat opened and verified successfully!')
-            logger.info('💬 Writing and sending a test message...')
-            message_success = vscode.send_chat_message(args.prompt, args.model, args.mode)
-            if message_success:
-                logger.info('✅ Example chat message written and sent successfully!')
-            vscode.take_screenshot('desktop-vscode-copilot-chat.png')
-            logger.info('📝 Extracting all Copilot chat messages...')
-            all_messages = vscode.extract_all_chat_messages()
-            output['messages'] = all_messages
-            logger.info(f'All Copilot chat messages: {all_messages}')
-        else:
-            logger.warning('⚠️ Copilot chat could not be opened or is not available')
+        logger.info('🤖 Copilot chat should now be open!')
+        logger.info('💬 Writing and sending a test message...')
+        message_success = vscode.send_chat_message(args.prompt, args.model, args.mode)
+        if message_success:
+            logger.info('✅ Example chat message written and sent successfully!')
+        vscode.take_screenshot('desktop-vscode-copilot-chat.png')
+        logger.info('📝 Extracting all Copilot chat messages...')
+        all_messages = vscode.extract_all_chat_messages()
+        output['messages'] = all_messages
+        logger.info(f'All Copilot chat messages: {all_messages}')
         output['model'] = args.model
         output['mode'] = args.mode
         if args.output:

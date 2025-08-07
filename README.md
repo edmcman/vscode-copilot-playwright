@@ -67,7 +67,6 @@ The `AutoVSCodeCopilot` class provides the following methods:
 
 - `dumpDOM()` - Extract and save the complete DOM
 - `takeScreenshot(filename=None)` - Capture a screenshot
-- `showCopilotChat()` - Open Copilot chat
 - `sendChatMessage(message, modelLabel='GPT-4.1', modeLabel='Agent')` - Send a chat message
 - `extractAllChatMessages()` - Extract all chat messages
 - `close()` - Close the browser connection and VS Code process

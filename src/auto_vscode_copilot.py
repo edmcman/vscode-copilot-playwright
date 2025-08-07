@@ -25,7 +25,9 @@ class AutoVSCodeCopilot:
         logger.info("Launching VS Code desktop with remote debugging...")
         self._launch_vscode(workspace_path)
         self._wait_for_vscode_to_start()
+
         self._connect_to_vscode()
+        self._show_copilot_chat_helper()
         logger.info("VS Code loaded successfully!")
 
     def _launch_vscode(self, workspace_path=None):
@@ -98,7 +100,8 @@ class AutoVSCodeCopilot:
         logger.debug(f"Screenshot saved to: {filepath}")
         return str(filepath)
 
-    def show_copilot_chat(self):
+
+    def _show_copilot_chat_helper(self):
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         logger.debug('Opening Copilot chat window using keyboard shortcut...')
@@ -112,7 +115,7 @@ class AutoVSCodeCopilot:
         except PlaywrightTimeoutError:
             raise RuntimeError("Failed to open Copilot chat: Selector 'div.interactive-session' not found. This might indicate Copilot is not available or the interface has changed.")
 
-    def write_chat_message_helper(self, message):
+    def _write_chat_message_helper(self, message):
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         logger.debug(f'Writing chat message: "{message}"')
@@ -120,7 +123,7 @@ class AutoVSCodeCopilot:
         input_locator.wait_for(state='visible', timeout=1000)
         input_locator.type(message)
 
-    def send_chat_message_helper(self):
+    def _send_chat_message_helper(self):
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         logger.debug('Sending chat message...')
@@ -138,8 +141,8 @@ class AutoVSCodeCopilot:
         logger.debug(f'📝 Writing and sending chat message: "{message}" (model: {model_label}, mode: {mode_label})')
         self.pick_copilot_model_helper(model_label)
         self.pick_copilot_mode_helper(mode_label)
-        self.write_chat_message_helper(message)
-        self.send_chat_message_helper()
+        self._write_chat_message_helper(message)
+        self._send_chat_message_helper()
         logger.debug('✅ Chat message written and sent successfully!')
         return True
 
