@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
-class VSCodeTool:
+class AutoVSCodeCopilot:
     def __init__(self):
         self.browser = None
         self.context = None

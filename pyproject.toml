@@ -1,5 +1,5 @@
 [project]
-name = "vscode-copilot-playwright"
+name = "auto_vscode_copilot"
 version = "0.1.0"
 description = "Automate VS Code desktop with Playwright and Copilot chat integration."
 authors = [

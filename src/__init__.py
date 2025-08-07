@@ -1,1 +1,1 @@
-from .vscode_tool import VSCodeTool
+from .auto_vscode_copilot import AutoVSCodeCopilot

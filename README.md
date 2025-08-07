@@ -31,11 +31,11 @@ playwright install
 
 ## Usage as a Library
 
-Import and use the VSCodeTool class:
+Import and use the AutoVSCodeCopilot class:
 ```python
-from vscode_tool import VSCodeTool
+from auto_vscode_copilot import AutoVSCodeCopilot
 
-tool = VSCodeTool()
+tool = AutoVSCodeCopilot()
 tool.launch('/path/to/workspace')
 # ... use other methods ...
 tool.close()
@@ -61,7 +61,8 @@ The tool creates an `output` directory containing:
 
 ## API
 
-The `VSCodeTool` class provides the following methods:
+
+The `AutoVSCodeCopilot` class provides the following methods:
 
 - `launch(workspacePath=None)` - Launch desktop VS Code with optional workspace
 - `dumpDOM()` - Extract and save the complete DOM

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
-from vscode_tool import VSCodeTool
+from auto_vscode_copilot import AutoVSCodeCopilot
 
 def main():
     parser = argparse.ArgumentParser(description='Playwright tool for interacting with VS Code')
@@ -12,7 +12,7 @@ def main():
     args = parser.parse_args()
 
     output = {}
-    vscode = VSCodeTool()
+    vscode = AutoVSCodeCopilot()
     try:
         print('🚀 Starting VS Code Playwright Tool Demo (Desktop)')
         print('\n📂 Launching VS Code desktop...')
