@@ -14,7 +14,16 @@ logger = logging.getLogger("AutoVSCodeCopilot")
 
 
 class AutoVSCodeCopilot:
-    def __init__(self, workspace_path=None):
+    def __init__(self, *args, **kwargs):
+        raise RuntimeError(
+            "Direct instantiation is not supported. "
+            "Use 'await AutoVSCodeCopilot.create(...)' instead."
+        )
+
+    @classmethod
+    async def create(cls, workspace_path=None):
+        """Create and initialize an AutoVSCodeCopilot instance asynchronously."""
+        self = object.__new__(cls)
         self.browser = None
         self.context = None
         self.page = None
@@ -26,13 +35,8 @@ class AutoVSCodeCopilot:
         logger.info("Launching VS Code desktop with remote debugging...")
         self._launch_vscode(workspace_path)
         self._wait_for_vscode_to_start()
-
-    @classmethod
-    async def create(cls, workspace_path=None):
-        """Create and initialize an AutoVSCodeCopilot instance asynchronously."""
-        instance = cls(workspace_path)
-        await instance.initialize()
-        return instance
+        await self.initialize()
+        return self
 
     async def initialize(self):
         """Initialize the async Playwright connection. Call this after creating the instance."""
