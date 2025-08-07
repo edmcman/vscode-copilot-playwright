@@ -143,7 +143,11 @@ class AutoVSCodeCopilot:
         logger.debug(f'Writing chat message: "{message}"')
         input_locator = self.page.locator('div.chat-editor-container')
         await input_locator.wait_for(state='visible', timeout=1000)
-        await input_locator.type(message)
+        for c in message:
+            if c == '\n':
+                await self.page.keyboard.press('Shift+Enter')
+            else:
+                await input_locator.type(c)
 
     async def _send_chat_message_helper(self):
         if not self.page:
