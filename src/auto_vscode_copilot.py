@@ -15,6 +15,14 @@ logger = logging.getLogger("AutoVSCodeCopilot")
 
 class AutoVSCodeCopilot:
     def __init__(self, *args, **kwargs):
+        # for mypy
+        self.browser = None
+        self.context = None
+        self.page = None
+        self.vscode_process = None
+        self.vscode_port = None
+        self.user_data_dir = None
+        self.playwright = None
         raise RuntimeError(
             "Direct instantiation is not supported. "
             "Use 'await AutoVSCodeCopilot.create(...)' instead."
