@@ -10,5 +10,5 @@ def test_example_script_runs_successfully():
     if result.stderr:
         print('STDERR:', result.stderr)
     assert result.returncode == 0
-    assert 'Demo completed successfully!' in result.stdout
-    assert 'Cleaning up...' in result.stdout
+    assert 'Demo completed successfully!' in result.stderr
+    assert 'Cleaning up...' in result.stderr

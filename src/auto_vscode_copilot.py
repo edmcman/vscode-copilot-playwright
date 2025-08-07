@@ -3,7 +3,7 @@ import time
 from pathlib import Path
 import subprocess
 import logging
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,13 +21,23 @@ class AutoVSCodeCopilot:
         self.vscode_process = None
         self.vscode_port = 9222
         self.user_data_dir = Path(__file__).parent.parent / ".vscode-playwright-data"
+        self.playwright = None
         logger.info(f"Using persistent VS Code user data directory: {self.user_data_dir}")
         logger.info("Launching VS Code desktop with remote debugging...")
         self._launch_vscode(workspace_path)
         self._wait_for_vscode_to_start()
 
-        self._connect_to_vscode()
-        self._show_copilot_chat_helper()
+    @classmethod
+    async def create(cls, workspace_path=None):
+        """Create and initialize an AutoVSCodeCopilot instance asynchronously."""
+        instance = cls(workspace_path)
+        await instance.initialize()
+        return instance
+
+    async def initialize(self):
+        """Initialize the async Playwright connection. Call this after creating the instance."""
+        await self._connect_to_vscode()
+        await self._show_copilot_chat_helper()
         logger.info("VS Code loaded successfully!")
 
     def _launch_vscode(self, workspace_path=None):
@@ -61,10 +71,10 @@ class AutoVSCodeCopilot:
             time.sleep(1)
         raise RuntimeError(f"VS Code failed to start or debugging port {self.vscode_port} is not accessible.")
 
-    def _connect_to_vscode(self):
+    async def _connect_to_vscode(self):
         logger.debug("Connecting Playwright to VS Code...")
-        self.playwright = sync_playwright().start()
-        self.browser = self.playwright.chromium.connect_over_cdp(f"http://localhost:{self.vscode_port}")
+        self.playwright = await async_playwright().start()
+        self.browser = await self.playwright.chromium.connect_over_cdp(f"http://localhost:{self.vscode_port}")
         contexts = self.browser.contexts
         if not contexts:
             raise RuntimeError("No VS Code contexts found")
@@ -79,16 +89,16 @@ class AutoVSCodeCopilot:
         # Uncomment the next line to enable console logging
         # self.page.on("console", handle_console_msg)
         try:
-            self.page.wait_for_selector('.monaco-workbench', timeout=30000)
+            await self.page.wait_for_selector('.monaco-workbench', timeout=30000)
         except PlaywrightTimeoutError:
             raise RuntimeError("Failed to find VS Code workbench: Selector '.monaco-workbench' not found. This indicates VS Code did not load properly.")
 
-    def dump_dom(self):
+    async def dump_dom(self):
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
-        return self.page.content()
+        return await self.page.content()
 
-    def take_screenshot(self, filename=None):
+    async def take_screenshot(self, filename=None):
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         output_dir = Path.cwd() / 'output'
@@ -96,71 +106,71 @@ class AutoVSCodeCopilot:
         timestamp = time.strftime('%Y-%m-%dT%H-%M-%S')
         screenshot_name = filename or f"vscode-screenshot-{timestamp}.png"
         filepath = output_dir / screenshot_name
-        self.page.screenshot(path=str(filepath), full_page=True)
+        await self.page.screenshot(path=str(filepath), full_page=True)
         logger.debug(f"Screenshot saved to: {filepath}")
         return str(filepath)
 
 
-    def _show_copilot_chat_helper(self):
+    async def _show_copilot_chat_helper(self):
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         logger.debug('Opening Copilot chat window using keyboard shortcut...')
         try:
-            self.page.keyboard.press('Control+Alt+i')
+            await self.page.keyboard.press('Control+Alt+i')
             chat_locator = self.page.locator('div.interactive-session')
             logger.debug('Verifying Copilot chat window presence...')
-            chat_locator.wait_for(state='visible', timeout=5000)
+            await chat_locator.wait_for(state='visible', timeout=5000)
             logger.info('✅ Copilot chat window successfully opened and verified!')
             return True
         except PlaywrightTimeoutError:
             raise RuntimeError("Failed to open Copilot chat: Selector 'div.interactive-session' not found. This might indicate Copilot is not available or the interface has changed.")
 
-    def _write_chat_message_helper(self, message):
+    async def _write_chat_message_helper(self, message):
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         logger.debug(f'Writing chat message: "{message}"')
         input_locator = self.page.locator('div.chat-editor-container')
-        input_locator.wait_for(state='visible', timeout=1000)
-        input_locator.type(message)
+        await input_locator.wait_for(state='visible', timeout=1000)
+        await input_locator.type(message)
 
-    def _send_chat_message_helper(self):
+    async def _send_chat_message_helper(self):
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         logger.debug('Sending chat message...')
         send_button_locator = self.page.locator('a.action-label.codicon.codicon-send')
-        send_button_locator.wait_for(state='visible', timeout=1000)
+        await send_button_locator.wait_for(state='visible', timeout=1000)
         logger.debug('Clicking send button using Locator...')
-        send_button_locator.click()
-        send_button_locator.wait_for(state='hidden', timeout=1000)
-        send_button_locator.wait_for(state='visible', timeout=60000)
+        await send_button_locator.click()
+        await send_button_locator.wait_for(state='hidden', timeout=1000)
+        await send_button_locator.wait_for(state='visible', timeout=60000)
         logger.debug('✅ Chat message sent successfully!')
 
-    def send_chat_message(self, message, model_label='GPT-4.1', mode_label='Agent'):
+    async def send_chat_message(self, message, model_label='GPT-4.1', mode_label='Agent'):
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         logger.debug(f'📝 Writing and sending chat message: "{message}" (model: {model_label}, mode: {mode_label})')
-        self.pick_copilot_model_helper(model_label)
-        self.pick_copilot_mode_helper(mode_label)
-        self._write_chat_message_helper(message)
-        self._send_chat_message_helper()
+        await self.pick_copilot_model_helper(model_label)
+        await self.pick_copilot_mode_helper(mode_label)
+        await self._write_chat_message_helper(message)
+        await self._send_chat_message_helper()
         logger.debug('✅ Chat message written and sent successfully!')
         return True
 
-    def close(self):
+    async def close(self):
         logger.info('Closing VS Code tool...')
         if self.page:
             try:
-                self.page.close()
+                await self.page.close()
             except Exception as e:
                 logger.warning(f'Error closing page: {e}')
         if self.browser:
             try:
-                self.browser.close()
+                await self.browser.close()
             except Exception as e:
                 logger.warning(f'Error closing browser connection: {e}')
         if self.playwright:
             try:
-                self.playwright.stop()
+                await self.playwright.stop()
             except Exception as e:
                 logger.warning(f'Error stopping Playwright: {e}')
         if self.vscode_process and self.vscode_process.poll() is None:
@@ -174,21 +184,21 @@ class AutoVSCodeCopilot:
                 self.vscode_process.wait()
         logger.info('VS Code tool closed.')
 
-    def is_chat_loading(self):
+    async def is_chat_loading(self):
         """
         Lightweight check for chat loading spinner presence.
         Returns True if chat is loading, False otherwise.
         """
         assert self.page is not None, "VS Code not launched. Call launch() first."
-        return self.page.evaluate("""
+        return await self.page.evaluate("""
             !!document.querySelector('div.chat-response-loading')
         """)
 
-    def _extract_chat_messages_helper(self):
+    async def _extract_chat_messages_helper(self):
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         # Only extract messages and confirmation state, no waiting or clicking
-        return self.page.evaluate("""
+        return await self.page.evaluate("""
         (() => {
             const session = document.querySelector('div.interactive-session');
             if (!session) return { messages: [], loading: false, confirmation: false };
@@ -229,45 +239,46 @@ class AutoVSCodeCopilot:
         })()
         """)
 
-    def extract_all_chat_messages(self):
+    async def extract_all_chat_messages(self):
         """
         Extract all chat messages, handling confirmation and loading in a loop until complete.
         Handles confirmation prompts and waits for loading to finish using Playwright.
         """
 
         assert self.page is not None, "VS Code not launched. Call launch() first."
-        while self.is_chat_loading():
-            result = self._extract_chat_messages_helper()
+        while await self.is_chat_loading():
+            result = await self._extract_chat_messages_helper()
             confirmation = result.get('confirmation')
 
             if confirmation:
                 logger.debug("Confirmation prompt detected, clicking Continue...")
-                self.page.locator('a.monaco-button[aria-label^="Continue"]').click()
+                await self.page.locator('a.monaco-button[aria-label^="Continue"]').click()
                 continue
 
             logger.debug("Waiting for chat response to finish loading...")
-            self.page.wait_for_selector('div.chat-response-loading', state='detached')
+            await self.page.wait_for_selector('div.chat-response-loading', state='detached')
 
         # Neither loading nor confirmation: extraction complete
-        return self._extract_chat_messages_helper().get('messages')
+        result = await self._extract_chat_messages_helper()
+        return result.get('messages')
 
-    def pick_copilot_picker_helper(self, picker_aria_label, option_label=None):
+    async def pick_copilot_picker_helper(self, picker_aria_label, option_label=None):
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         picker_locator = self.page.locator(f'a.action-label[aria-label*="{picker_aria_label}"]')
-        picker_locator.wait_for(state='visible', timeout=10000)
-        picker_locator.click()
+        await picker_locator.wait_for(state='visible', timeout=10000)
+        await picker_locator.click()
         context_locator = self.page.locator('div.context-view div.monaco-list')
-        context_locator.wait_for(state='visible', timeout=10000)
+        await context_locator.wait_for(state='visible', timeout=10000)
         option_locator = context_locator.locator(f'div.monaco-list-row.action[aria-label="{option_label}"]')
-        option_locator.wait_for(state='visible', timeout=100)
-        option_locator.click(force=True, timeout=1000)
-        selected = picker_locator.inner_text()
+        await option_locator.wait_for(state='visible', timeout=100)
+        await option_locator.click(force=True, timeout=1000)
+        selected = await picker_locator.inner_text()
         if selected != option_label:
             raise RuntimeError(f"Tried to select {picker_aria_label.lower()}: {option_label}, but got: {selected}")
 
-    def pick_copilot_model_helper(self, model_label=None):
-        self.pick_copilot_picker_helper('Pick Model', model_label)
+    async def pick_copilot_model_helper(self, model_label=None):
+        await self.pick_copilot_picker_helper('Pick Model', model_label)
 
-    def pick_copilot_mode_helper(self, mode_label=None):
-        self.pick_copilot_picker_helper('Set Mode', mode_label)
+    async def pick_copilot_mode_helper(self, mode_label=None):
+        await self.pick_copilot_picker_helper('Set Mode', mode_label)

@@ -3,6 +3,7 @@
 import argparse
 import json
 import logging
+import asyncio
 from auto_vscode_copilot import AutoVSCodeCopilot
 
 logging.basicConfig(
@@ -12,7 +13,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("example")
 
-def main():
+async def main():
     parser = argparse.ArgumentParser(description='Playwright tool for interacting with VS Code')
     parser.add_argument('--output', '-o', type=str, default=None)
     parser.add_argument('--model', '-m', type=str, default='GPT-4.1')
@@ -22,20 +23,20 @@ def main():
     args = parser.parse_args()
 
     output = {}
-    vscode = AutoVSCodeCopilot(workspace_path=args.workspace)
+    vscode = await AutoVSCodeCopilot.create(workspace_path=args.workspace)
     try:
         logger.info('🚀 Starting VS Code Playwright Tool Demo (Desktop)')
         logger.info(f'📂 Launching VS Code desktop (workspace: {args.workspace})...')
         logger.info('📸 Taking screenshot...')
-        vscode.take_screenshot('desktop-vscode-initial.png')
+        await vscode.take_screenshot('desktop-vscode-initial.png')
         logger.info('🤖 Copilot chat should now be open!')
         logger.info('💬 Writing and sending a test message...')
-        message_success = vscode.send_chat_message(args.prompt, args.model, args.mode)
+        message_success = await vscode.send_chat_message(args.prompt, args.model, args.mode)
         if message_success:
             logger.info('✅ Example chat message written and sent successfully!')
-        vscode.take_screenshot('desktop-vscode-copilot-chat.png')
+        await vscode.take_screenshot('desktop-vscode-copilot-chat.png')
         logger.info('📝 Extracting all Copilot chat messages...')
-        all_messages = vscode.extract_all_chat_messages()
+        all_messages = await vscode.extract_all_chat_messages()
         output['messages'] = all_messages
         logger.info(f'All Copilot chat messages: {all_messages}')
         output['model'] = args.model
@@ -50,7 +51,7 @@ def main():
         logger.info('Demo completed successfully!')
     finally:
         logger.info('🔄 Cleaning up...')
-        vscode.close()
+        await vscode.close()
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())

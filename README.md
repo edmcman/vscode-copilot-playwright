@@ -34,11 +34,16 @@ playwright install
 
 Import and use the AutoVSCodeCopilot class:
 ```python
+import asyncio
 from auto_vscode_copilot import AutoVSCodeCopilot
 
-tool = AutoVSCodeCopilot(workspace_path='/path/to/workspace')
-# ... use other methods ...
-tool.close()
+async def main():
+    tool = await AutoVSCodeCopilot.create(workspace_path='/path/to/workspace')
+    # ... use other async methods ...
+    await tool.close()
+
+# Run the async function
+asyncio.run(main())
 ```
 
 ## Usage as a Script
