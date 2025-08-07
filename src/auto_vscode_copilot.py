@@ -2,7 +2,15 @@ import requests
 import time
 from pathlib import Path
 import subprocess
+import logging
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] %(levelname)s %(name)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger("AutoVSCodeCopilot")
 
 
 class AutoVSCodeCopilot:
@@ -13,15 +21,15 @@ class AutoVSCodeCopilot:
         self.vscode_process = None
         self.vscode_port = 9222
         self.user_data_dir = Path(__file__).parent.parent / ".vscode-playwright-data"
-        print(f"Using persistent VS Code user data directory: {self.user_data_dir}")
-        print("Launching VS Code desktop with remote debugging...")
+        logger.info(f"Using persistent VS Code user data directory: {self.user_data_dir}")
+        logger.info("Launching VS Code desktop with remote debugging...")
         self._launch_vscode(workspace_path)
         self._wait_for_vscode_to_start()
         self._connect_to_vscode()
-        print("VS Code loaded successfully!")
+        logger.info("VS Code loaded successfully!")
 
     def _launch_vscode(self, workspace_path=None):
-        print(f"Starting VS Code on port {self.vscode_port}...")
+        logger.debug(f"Starting VS Code on port {self.vscode_port}...")
         self.user_data_dir.mkdir(parents=True, exist_ok=True)
         vscode_args = [
             f"--remote-debugging-port={self.vscode_port}",
@@ -33,18 +41,18 @@ class AutoVSCodeCopilot:
         ]
         if workspace_path:
             vscode_args.append(workspace_path)
-            print(f"Opening workspace: {workspace_path}")
+            logger.debug(f"Opening workspace: {workspace_path}")
         vscode_executable = "code"
-        print(f"Executing VS Code: {vscode_executable} {' '.join(vscode_args)}")
+        logger.debug(f"Executing VS Code: {vscode_executable} {' '.join(vscode_args)}")
         self.vscode_process = subprocess.Popen([vscode_executable] + vscode_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def _wait_for_vscode_to_start(self):
-        print("Waiting for VS Code to start...")
+        logger.debug("Waiting for VS Code to start...")
         for _ in range(30):
             try:
                 response = requests.get(f"http://localhost:{self.vscode_port}/json/version")
                 if response.ok:
-                    print("VS Code debugging port is ready")
+                    logger.debug("VS Code debugging port is ready")
                     return
             except Exception:
                 pass
@@ -52,7 +60,7 @@ class AutoVSCodeCopilot:
         raise RuntimeError(f"VS Code failed to start or debugging port {self.vscode_port} is not accessible.")
 
     def _connect_to_vscode(self):
-        print("Connecting Playwright to VS Code...")
+        logger.debug("Connecting Playwright to VS Code...")
         self.playwright = sync_playwright().start()
         self.browser = self.playwright.chromium.connect_over_cdp(f"http://localhost:{self.vscode_port}")
         contexts = self.browser.contexts
@@ -65,7 +73,7 @@ class AutoVSCodeCopilot:
         self.page = pages[0]
         # Add browser console log handler for debugging page.evaluate
         def handle_console_msg(msg):
-            print(f"[Browser Console][{msg.type}] {msg.text}")
+            logger.debug(f"[Browser Console][{msg.type}] {msg.text}")
         # Uncomment the next line to enable console logging
         # self.page.on("console", handle_console_msg)
         try:
@@ -87,19 +95,19 @@ class AutoVSCodeCopilot:
         screenshot_name = filename or f"vscode-screenshot-{timestamp}.png"
         filepath = output_dir / screenshot_name
         self.page.screenshot(path=str(filepath), full_page=True)
-        print(f"Screenshot saved to: {filepath}")
+        logger.debug(f"Screenshot saved to: {filepath}")
         return str(filepath)
 
     def show_copilot_chat(self):
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
-        print('Opening Copilot chat window using keyboard shortcut...')
+        logger.debug('Opening Copilot chat window using keyboard shortcut...')
         try:
             self.page.keyboard.press('Control+Alt+i')
             chat_locator = self.page.locator('div.interactive-session')
-            print('Verifying Copilot chat window presence...')
+            logger.debug('Verifying Copilot chat window presence...')
             chat_locator.wait_for(state='visible', timeout=5000)
-            print('✅ Copilot chat window successfully opened and verified!')
+            logger.info('✅ Copilot chat window successfully opened and verified!')
             return True
         except PlaywrightTimeoutError:
             raise RuntimeError("Failed to open Copilot chat: Selector 'div.interactive-session' not found. This might indicate Copilot is not available or the interface has changed.")
@@ -107,7 +115,7 @@ class AutoVSCodeCopilot:
     def write_chat_message_helper(self, message):
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
-        print(f'Writing chat message: "{message}"')
+        logger.debug(f'Writing chat message: "{message}"')
         input_locator = self.page.locator('div.chat-editor-container')
         input_locator.wait_for(state='visible', timeout=1000)
         input_locator.type(message)
@@ -115,53 +123,53 @@ class AutoVSCodeCopilot:
     def send_chat_message_helper(self):
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
-        print('Sending chat message...')
+        logger.debug('Sending chat message...')
         send_button_locator = self.page.locator('a.action-label.codicon.codicon-send')
         send_button_locator.wait_for(state='visible', timeout=1000)
-        print('Clicking send button using Locator...')
+        logger.debug('Clicking send button using Locator...')
         send_button_locator.click()
         send_button_locator.wait_for(state='hidden', timeout=1000)
         send_button_locator.wait_for(state='visible', timeout=60000)
-        print('✅ Chat message sent successfully!')
+        logger.debug('✅ Chat message sent successfully!')
 
     def send_chat_message(self, message, model_label='GPT-4.1', mode_label='Agent'):
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
-        print(f'📝 Writing and sending chat message: "{message}" (model: {model_label}, mode: {mode_label})')
+        logger.debug(f'📝 Writing and sending chat message: "{message}" (model: {model_label}, mode: {mode_label})')
         self.pick_copilot_model_helper(model_label)
         self.pick_copilot_mode_helper(mode_label)
         self.write_chat_message_helper(message)
         self.send_chat_message_helper()
-        print('✅ Chat message written and sent successfully!')
+        logger.debug('✅ Chat message written and sent successfully!')
         return True
 
     def close(self):
-        print('Closing VS Code tool...')
+        logger.info('Closing VS Code tool...')
         if self.page:
             try:
                 self.page.close()
             except Exception as e:
-                print('Error closing page:', e)
+                logger.warning(f'Error closing page: {e}')
         if self.browser:
             try:
                 self.browser.close()
             except Exception as e:
-                print('Error closing browser connection:', e)
+                logger.warning(f'Error closing browser connection: {e}')
         if self.playwright:
             try:
                 self.playwright.stop()
             except Exception as e:
-                print('Error stopping Playwright:', e)
+                logger.warning(f'Error stopping Playwright: {e}')
         if self.vscode_process and self.vscode_process.poll() is None:
-            print('Closing VS Code process...')
+            logger.debug('Closing VS Code process...')
             self.vscode_process.terminate()
             try:
                 self.vscode_process.wait(timeout=2)
             except subprocess.TimeoutExpired:
-                print('VS Code process did not exit after SIGTERM, sending SIGKILL...')
+                logger.warning('VS Code process did not exit after SIGTERM, sending SIGKILL...')
                 self.vscode_process.kill()
                 self.vscode_process.wait()
-        print('VS Code tool closed.')
+        logger.info('VS Code tool closed.')
 
     def is_chat_loading(self):
         """
@@ -230,11 +238,11 @@ class AutoVSCodeCopilot:
             confirmation = result.get('confirmation')
 
             if confirmation:
-                print("Confirmation prompt detected, clicking Continue...")
+                logger.debug("Confirmation prompt detected, clicking Continue...")
                 self.page.locator('a.monaco-button[aria-label^="Continue"]').click()
                 continue
 
-            print("Waiting for chat response to finish loading...")
+            logger.debug("Waiting for chat response to finish loading...")
             self.page.wait_for_selector('div.chat-response-loading', state='detached')
 
         # Neither loading nor confirmation: extraction complete

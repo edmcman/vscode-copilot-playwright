@@ -1,7 +1,16 @@
 #!/usr/bin/env python3
+
 import argparse
 import json
+import logging
 from auto_vscode_copilot import AutoVSCodeCopilot
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] %(levelname)s %(name)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger("example")
 
 def main():
     parser = argparse.ArgumentParser(description='Playwright tool for interacting with VS Code')
@@ -15,37 +24,37 @@ def main():
     output = {}
     vscode = AutoVSCodeCopilot(workspace_path=args.workspace)
     try:
-        print('🚀 Starting VS Code Playwright Tool Demo (Desktop)')
-        print(f'\n📂 Launching VS Code desktop (workspace: {args.workspace})...')
-        print('📸 Taking screenshot...')
+        logger.info('🚀 Starting VS Code Playwright Tool Demo (Desktop)')
+        logger.info(f'📂 Launching VS Code desktop (workspace: {args.workspace})...')
+        logger.info('📸 Taking screenshot...')
         vscode.take_screenshot('desktop-vscode-initial.png')
-        print('🤖 Testing Copilot chat...')
+        logger.info('🤖 Testing Copilot chat...')
         copilot_opened = vscode.show_copilot_chat()
         if copilot_opened:
-            print('✅ Copilot chat opened and verified successfully!')
-            print('💬 Writing and sending a test message...')
+            logger.info('✅ Copilot chat opened and verified successfully!')
+            logger.info('💬 Writing and sending a test message...')
             message_success = vscode.send_chat_message(args.prompt, args.model, args.mode)
             if message_success:
-                print('✅ Example chat message written and sent successfully!')
+                logger.info('✅ Example chat message written and sent successfully!')
             vscode.take_screenshot('desktop-vscode-copilot-chat.png')
-            print('📝 Extracting all Copilot chat messages...')
+            logger.info('📝 Extracting all Copilot chat messages...')
             all_messages = vscode.extract_all_chat_messages()
             output['messages'] = all_messages
-            print('All Copilot chat messages:', all_messages)
+            logger.info(f'All Copilot chat messages: {all_messages}')
         else:
-            print('⚠️ Copilot chat could not be opened or is not available')
+            logger.warning('⚠️ Copilot chat could not be opened or is not available')
         output['model'] = args.model
         output['mode'] = args.mode
         if args.output:
             try:
                 with open(args.output, 'w', encoding='utf8') as f:
                     json.dump(output, f, indent=2)
-                print(f'✅ Output written to {args.output}')
+                logger.info(f'✅ Output written to {args.output}')
             except Exception as err:
-                print(f'❌ Failed to write output to {args.output}:', err)
-        print('Demo completed successfully!')
+                logger.error(f'❌ Failed to write output to {args.output}: {err}')
+        logger.info('Demo completed successfully!')
     finally:
-        print('🔄 Cleaning up...')
+        logger.info('🔄 Cleaning up...')
         vscode.close()
 
 if __name__ == '__main__':
