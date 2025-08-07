@@ -58,10 +58,8 @@ class AutoVSCodeCopilot:
         vscode_args = [
             f"--remote-debugging-port={self.vscode_port}",
             f"--user-data-dir={self.user_data_dir}",
-            "--disable-web-security",
-            "--disable-features=VizDisplayCompositor",
             "--no-sandbox",
-            "--disable-setuid-sandbox",
+            "--disable-workspace-trust",
         ]
         if workspace_path:
             vscode_args.append(workspace_path)
