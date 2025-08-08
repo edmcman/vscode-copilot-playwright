@@ -228,22 +228,34 @@ class AutoVSCodeCopilot:
                 // User row
                 const user = row.querySelector('.interactive-request > .value');
                 if (user) {
-                    const parts = Array.from(user.querySelectorAll(':scope > .rendered-markdown'))
-                        .map(el => (el.textContent || '').trim())
-                        .filter(Boolean);
-                    if (parts.length) messages.push({ entity: 'user', message: parts.join('\\n\\n') });
+                    const texts = [];
+                    const htmls = [];
+                    for (const el of Array.from(user.querySelectorAll(':scope > .rendered-markdown'))) {
+                        const t = (el.textContent || '').trim();
+                        const h = el.innerHTML || '';
+                        if (t) texts.push(t);
+                        if (h) htmls.push(h);
+                    }
+                    if (texts.length || htmls.length) {
+                        const text = texts.join('\\n\\n').trim();
+                        const html = htmls.join('\\n\\n').trim();
+                        messages.push({ entity: 'user', message: text, text, html });
+                    }
                     continue;
                 }
 
                 // Assistant row
                 const resp = row.querySelector('.interactive-response > .value');
                 if (resp) {
-                    let mdBuf = [];
+                    let mdTextBuf = [];
+                    let mdHtmlBuf = [];
                     const flush = () => {
-                        if (!mdBuf.length) return;
-                        const text = mdBuf.join('\\n\\n').trim();
-                        if (text) messages.push({ entity: 'assistant', message: text });
-                        mdBuf = [];
+                        if (!mdTextBuf.length && !mdHtmlBuf.length) return;
+                        const text = mdTextBuf.join('\\n\\n').trim();
+                        const html = mdHtmlBuf.join('\\n\\n').trim();
+                        if (text || html) messages.push({ entity: 'assistant', message: text, text, html });
+                        mdTextBuf = [];
+                        mdHtmlBuf = [];
                     };
 
                     const parts = resp.querySelectorAll(
@@ -252,18 +264,22 @@ class AutoVSCodeCopilot:
                     for (const el of parts) {
                         if (el.classList.contains('rendered-markdown')) {
                             const t = (el.textContent || '').trim();
-                            if (t) mdBuf.push(t);
+                            const h = el.innerHTML || '';
+                            if (t) mdTextBuf.push(t);
+                            if (h) mdHtmlBuf.push(h);
                         } else if (el.classList.contains('chat-confirmation-widget')) {
                             flush();
                             const title = el.querySelector('.chat-confirmation-widget-title .rendered-markdown');
                             const t = title && title.textContent ? title.textContent.trim() : '';
-                            if (t) messages.push({ entity: 'confirmation', message: t });
+                            const h = title && title.innerHTML ? title.innerHTML : (el.innerHTML || '');
+                            if (t || h) messages.push({ entity: 'confirmation', message: t, text: t, html: h });
                             confirmationFound = true;
                         } else {
                             // tool invocation/result
                             flush();
                             const t = (el.textContent || '').trim();
-                            if (t) messages.push({ entity: 'tool', message: t });
+                            const h = el.innerHTML || '';
+                            if (t || h) messages.push({ entity: 'tool', message: t, text: t, html: h });
                         }
                     }
                     flush();
