@@ -54,7 +54,7 @@ class AutoVSCodeCopilot:
 
     def _launch_vscode(self, workspace_path=None):
         logger.debug(f"Starting VS Code on port {self.vscode_port}...")
-        self.user_data_dir.mkdir(parents=True, exist_ok=True)
+        self.user_data_dir.mkdir(parents=True, exist_ok=True) # pyright: ignore[reportAttributeAccessIssue]
         vscode_args = [
             f"--remote-debugging-port={self.vscode_port}",
             f"--user-data-dir={self.user_data_dir}",
@@ -212,7 +212,7 @@ class AutoVSCodeCopilot:
     async def _extract_chat_messages_helper(self):
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
-        # Only extract messages and confirmation state, no waiting or clicking
+        # Extract all message parts per row preserving DOM order
         return await self.page.evaluate("""
         (() => {
             const session = document.querySelector('div.interactive-session');
@@ -221,36 +221,64 @@ class AutoVSCodeCopilot:
             if (!scrollable) return { messages: [], loading: false, confirmation: false };
             const rowsContainer = scrollable.querySelector('div.monaco-list-rows');
             if (!rowsContainer) return { messages: [], loading: false, confirmation: false };
-            let allMessages = [];
-            const rows = rowsContainer.querySelectorAll('div.monaco-list-row');
+
+            const rows = Array.from(rowsContainer.querySelectorAll('div.monaco-list-row'));
+            const messages = [];
             let confirmationFound = false;
-            rows.forEach(row => {
-                // User message
-                const userMsg = row.querySelector('.interactive-request > .value > .rendered-markdown');
-                if (userMsg) {
-                    allMessages.push({ entity: 'user', message: userMsg.textContent?.trim() ?? "" });
-                    return;
-                }
-                // Assistant message
-                const assistantMsg = row.querySelector('.interactive-response > .value > .rendered-markdown');
-                if (assistantMsg) {
-                    allMessages.push({ entity: 'assistant', message: assistantMsg.textContent?.trim() ?? "" });
-                    return;
-                }
-                // Confirmation prompt
-                const confirmationWidget = row.querySelector('.interactive-response > .value .chat-confirmation-widget');
-                if (confirmationWidget) {
-                    const confirmationTitle = confirmationWidget.querySelector('.chat-confirmation-widget-title .rendered-markdown');
-                    let confirmationText = confirmationTitle ? confirmationTitle.textContent?.trim() ?? "" : "";
-                    if (confirmationText) {
-                        allMessages.push({ entity: 'confirmation', message: confirmationText });
+
+            const pushBuffer = (buf) => {
+                if (!buf.type || !buf.parts.length) return;
+                const text = buf.parts.join('\\n\\n').trim();
+                if (text) messages.push({ entity: buf.type, message: text });
+                buf.type = '';
+                buf.parts = [];
+            };
+
+            for (const row of rows) {
+                // User row
+                const userValue = row.querySelector('.interactive-request > .value');
+                if (userValue) {
+                    const buf = { type: 'user', parts: [] };
+                    for (const child of Array.from(userValue.children)) {
+                        if (child.classList.contains('rendered-markdown')) {
+                            const t = (child.textContent || '').trim();
+                            if (t) buf.parts.push(t);
+                        }
                     }
-                    confirmationFound = true;
-                    return;
+                    pushBuffer(buf);
+                    continue;
                 }
-            });
+
+                // Assistant row
+                const respValue = row.querySelector('.interactive-response > .value');
+                if (respValue) {
+                    const buf = { type: '', parts: [] };
+                    for (const child of Array.from(respValue.children)) {
+                        if (child.classList.contains('chat-confirmation-widget')) {
+                            pushBuffer(buf);
+                            const title = child.querySelector('.chat-confirmation-widget-title .rendered-markdown');
+                            const t = title && title.textContent ? title.textContent.trim() : '';
+                            if (t) messages.push({ entity: 'confirmation', message: t });
+                            confirmationFound = true;
+                        } else if (child.classList.contains('chat-tool-invocation-part') || child.classList.contains('chat-tool-result-part')) {
+                            pushBuffer(buf);
+                            const t = (child.textContent || '').trim();
+                            if (t) messages.push({ entity: 'tool', message: t });
+                        } else if (child.classList.contains('rendered-markdown')) {
+                            const t = (child.textContent || '').trim();
+                            if (t) {
+                                if (buf.type !== 'assistant') { pushBuffer(buf); buf.type = 'assistant'; }
+                                buf.parts.push(t);
+                            }
+                        }
+                    }
+                    pushBuffer(buf);
+                    continue;
+                }
+            }
+
             const loading = !!document.querySelector('div.chat-response-loading');
-            return { messages: allMessages, loading, confirmation: confirmationFound };
+            return { messages, loading, confirmation: confirmationFound };
         })()
         """)
 
