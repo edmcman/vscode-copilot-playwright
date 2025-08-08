@@ -217,63 +217,56 @@ class AutoVSCodeCopilot:
         (() => {
             const session = document.querySelector('div.interactive-session');
             if (!session) return { messages: [], loading: false, confirmation: false };
-            const scrollable = session.querySelector('div.monaco-list div.monaco-scrollable-element');
-            if (!scrollable) return { messages: [], loading: false, confirmation: false };
-            const rowsContainer = scrollable.querySelector('div.monaco-list-rows');
-            if (!rowsContainer) return { messages: [], loading: false, confirmation: false };
 
-            const rows = Array.from(rowsContainer.querySelectorAll('div.monaco-list-row'));
+            const rows = Array.from(
+                session.querySelectorAll('div.monaco-list-rows > div.monaco-list-row')
+            );
             const messages = [];
             let confirmationFound = false;
 
-            const pushBuffer = (buf) => {
-                if (!buf.type || !buf.parts.length) return;
-                const text = buf.parts.join('\\n\\n').trim();
-                if (text) messages.push({ entity: buf.type, message: text });
-                buf.type = '';
-                buf.parts = [];
-            };
-
             for (const row of rows) {
                 // User row
-                const userValue = row.querySelector('.interactive-request > .value');
-                if (userValue) {
-                    const buf = { type: 'user', parts: [] };
-                    for (const child of Array.from(userValue.children)) {
-                        if (child.classList.contains('rendered-markdown')) {
-                            const t = (child.textContent || '').trim();
-                            if (t) buf.parts.push(t);
-                        }
-                    }
-                    pushBuffer(buf);
+                const user = row.querySelector('.interactive-request > .value');
+                if (user) {
+                    const parts = Array.from(user.querySelectorAll(':scope > .rendered-markdown'))
+                        .map(el => (el.textContent || '').trim())
+                        .filter(Boolean);
+                    if (parts.length) messages.push({ entity: 'user', message: parts.join('\\n\\n') });
                     continue;
                 }
 
                 // Assistant row
-                const respValue = row.querySelector('.interactive-response > .value');
-                if (respValue) {
-                    const buf = { type: '', parts: [] };
-                    for (const child of Array.from(respValue.children)) {
-                        if (child.classList.contains('chat-confirmation-widget')) {
-                            pushBuffer(buf);
-                            const title = child.querySelector('.chat-confirmation-widget-title .rendered-markdown');
+                const resp = row.querySelector('.interactive-response > .value');
+                if (resp) {
+                    let mdBuf = [];
+                    const flush = () => {
+                        if (!mdBuf.length) return;
+                        const text = mdBuf.join('\\n\\n').trim();
+                        if (text) messages.push({ entity: 'assistant', message: text });
+                        mdBuf = [];
+                    };
+
+                    const parts = resp.querySelectorAll(
+                        ':scope > .rendered-markdown, :scope > .chat-tool-invocation-part, :scope > .chat-tool-result-part, :scope > .chat-confirmation-widget'
+                    );
+                    for (const el of parts) {
+                        if (el.classList.contains('rendered-markdown')) {
+                            const t = (el.textContent || '').trim();
+                            if (t) mdBuf.push(t);
+                        } else if (el.classList.contains('chat-confirmation-widget')) {
+                            flush();
+                            const title = el.querySelector('.chat-confirmation-widget-title .rendered-markdown');
                             const t = title && title.textContent ? title.textContent.trim() : '';
                             if (t) messages.push({ entity: 'confirmation', message: t });
                             confirmationFound = true;
-                        } else if (child.classList.contains('chat-tool-invocation-part') || child.classList.contains('chat-tool-result-part')) {
-                            pushBuffer(buf);
-                            const t = (child.textContent || '').trim();
+                        } else {
+                            // tool invocation/result
+                            flush();
+                            const t = (el.textContent || '').trim();
                             if (t) messages.push({ entity: 'tool', message: t });
-                        } else if (child.classList.contains('rendered-markdown')) {
-                            const t = (child.textContent || '').trim();
-                            if (t) {
-                                if (buf.type !== 'assistant') { pushBuffer(buf); buf.type = 'assistant'; }
-                                buf.parts.push(t);
-                            }
                         }
                     }
-                    pushBuffer(buf);
-                    continue;
+                    flush();
                 }
             }
 
