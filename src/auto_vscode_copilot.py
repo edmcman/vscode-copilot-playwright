@@ -60,9 +60,10 @@ class AutoVSCodeCopilot:
             f"--user-data-dir={self.user_data_dir}",
             "--no-sandbox",
             "--disable-workspace-trust",
+            "--disable-web-security",
         ]
         if workspace_path:
-            vscode_args.append(workspace_path)
+            vscode_args.insert(0, workspace_path)
             logger.debug(f"Opening workspace: {workspace_path}")
         vscode_executable = "code"
         logger.debug(f"Executing VS Code: {vscode_executable} {' '.join(vscode_args)}")
@@ -216,7 +217,7 @@ class AutoVSCodeCopilot:
         (() => {
             const session = document.querySelector('div.interactive-session');
             if (!session) return { messages: [], loading: false, confirmation: false };
-            const scrollable = session.querySelector('div.interactive-list div.monaco-list div.monaco-scrollable-element');
+            const scrollable = session.querySelector('div.monaco-list div.monaco-scrollable-element');
             if (!scrollable) return { messages: [], loading: false, confirmation: false };
             const rowsContainer = scrollable.querySelector('div.monaco-list-rows');
             if (!rowsContainer) return { messages: [], loading: false, confirmation: false };
@@ -256,23 +257,55 @@ class AutoVSCodeCopilot:
     async def extract_all_chat_messages(self):
         """
         Extract all chat messages, handling confirmation and loading in a loop until complete.
-        Handles confirmation prompts and waits for loading to finish using Playwright.
+        Uses page.evaluate + MutationObserver to avoid Trusted Types issues with wait_for_function.
         """
-
         assert self.page is not None, "VS Code not launched. Call launch() first."
-        while await self.is_chat_loading():
-            result = await self._extract_chat_messages_helper()
-            confirmation = result.get('confirmation')
 
-            if confirmation:
+        while True:
+            state = await self.page.evaluate("""
+                () => new Promise((resolve) => {
+                    const check = () => {
+                        const loading = !!document.querySelector('div.chat-response-loading');
+                        const confirmation = !!document.querySelector('div.chat-confirmation-widget');
+                        if (!loading || confirmation) {
+                            return { loading, confirmation };
+                        }
+                        return null;
+                    };
+                    const initial = check();
+                    if (initial) return resolve(initial);
+
+                    const observer = new MutationObserver(() => {
+                        const res = check();
+                        if (res) {
+                            observer.disconnect();
+                            clearTimeout(timer);
+                            resolve(res);
+                        }
+                    });
+                    observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+
+                    // Safety timeout (30s) to avoid hanging forever
+                    const timer = setTimeout(() => {
+                        observer.disconnect();
+                        resolve({ loading: false, confirmation: false, timeout: true });
+                    }, 30000);
+                })
+            """)
+
+            if state.get("timeout"):
+                raise RuntimeError("Timed out waiting for chat to progress (loading end or confirmation).")
+
+            if state.get("confirmation"):
                 logger.debug("Confirmation prompt detected, clicking Continue...")
                 await self.page.locator('a.monaco-button[aria-label^="Continue"]').click()
+                # Loop again: another loading phase may start after confirmation
                 continue
 
-            logger.debug("Waiting for chat response to finish loading...")
-            await self.page.wait_for_selector('div.chat-response-loading', state='detached')
+            # Reached here: loading has ended and no confirmation is present
+            break
 
-        # Neither loading nor confirmation: extraction complete
+        # Final extraction
         result = await self._extract_chat_messages_helper()
         return result.get('messages')
 
