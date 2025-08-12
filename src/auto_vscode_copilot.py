@@ -222,13 +222,51 @@ class AutoVSCodeCopilot:
             return new Promise((resolve, reject) => {
                 console.log('[CHAT_EXTRACT] Starting message extraction with virtual scrolling...');
                 
-                const session = document.querySelector('div.interactive-session');
+                // Configuration constants
+                const MAX_SCROLL_ATTEMPTS = 200;
+                const MAX_NO_NEW_ROWS_COUNT = 1;
+                const MUTATION_DEBOUNCE_DELAY = 100;
+                const SCROLL_FALLBACK_TIMEOUT = 300;
+                const PROCESS_STEP_DELAY = 100;
+                const SAFETY_TIMEOUT = 60000; // 60 seconds
+                
+                // DOM selectors
+                const SELECTORS = {
+                    INTERACTIVE_SESSION: 'div.interactive-session',
+                    MONACO_LIST: 'div.monaco-list',
+                    MONACO_LIST_ROWS: 'div.monaco-list-rows > div.monaco-list-row',
+                    USER_REQUEST: '.interactive-request > .value',
+                    ASSISTANT_RESPONSE: '.interactive-response > .value',
+                    RENDERED_MARKDOWN: ':scope > .rendered-markdown',
+                    CHAT_PARTS: ':scope > .rendered-markdown, :scope > .chat-tool-invocation-part, :scope > .chat-tool-result-part, :scope > .chat-confirmation-widget',
+                    CONFIRMATION_WIDGET: '.chat-confirmation-widget',
+                    CONFIRMATION_TITLE: '.chat-confirmation-widget-title .rendered-markdown',
+                    LOADING_INDICATOR: 'div.chat-response-loading'
+                };
+                
+                // Keyboard event configurations
+                const KEY_EVENTS = {
+                    HOME: {
+                        key: 'Home',
+                        code: 'Home',
+                        keyCode: 36,
+                        which: 36
+                    },
+                    ARROW_DOWN: {
+                        key: 'ArrowDown',
+                        code: 'ArrowDown',
+                        keyCode: 40,
+                        which: 40
+                    }
+                };
+                
+                const session = document.querySelector(SELECTORS.INTERACTIVE_SESSION);
                 if (!session) {
                     console.log('[CHAT_EXTRACT] No interactive session found');
                     return resolve({ messages: [], loading: false, confirmation: false });
                 }
 
-                const listContainer = session.querySelector('div.monaco-list');
+                const listContainer = session.querySelector(SELECTORS.MONACO_LIST);
                 if (!listContainer) {
                     console.log('[CHAT_EXTRACT] No monaco-list container found');
                     return resolve({ messages: [], loading: false, confirmation: false });
@@ -259,7 +297,6 @@ class AutoVSCodeCopilot:
                 const seenRowIds = new Set();
                 let confirmationFound = false;
                 let scrollAttempts = 0;
-                const maxScrollAttempts = 200;
                 let noNewRowsCount = 0;
                 let isFinished = false;
                 
@@ -298,7 +335,7 @@ class AutoVSCodeCopilot:
                 };
                 
                 const extractCurrentlyVisibleRows = () => {
-                    const rows = Array.from(session.querySelectorAll('div.monaco-list-rows > div.monaco-list-row'));
+                    const rows = Array.from(session.querySelectorAll(SELECTORS.MONACO_LIST_ROWS));
                     console.log(`[CHAT_EXTRACT] Found ${rows.length} visible rows`);
                     
                     let newRowsFound = 0;
@@ -310,12 +347,12 @@ class AutoVSCodeCopilot:
                         newRowsFound++;
                         
                         // User row
-                        const user = row.querySelector('.interactive-request > .value');
+                        const user = row.querySelector(SELECTORS.USER_REQUEST);
                         if (user) {
                             console.log(`[CHAT_EXTRACT] Processing user row ${rowId}`);
                             const texts = [];
                             const htmls = [];
-                            for (const el of Array.from(user.querySelectorAll(':scope > .rendered-markdown'))) {
+                            for (const el of Array.from(user.querySelectorAll(SELECTORS.RENDERED_MARKDOWN))) {
                                 const t = (el.textContent || '').trim();
                                 const h = el.innerHTML || '';
                                 if (t) texts.push(t);
@@ -331,7 +368,7 @@ class AutoVSCodeCopilot:
                         }
 
                         // Assistant row
-                        const resp = row.querySelector('.interactive-response > .value');
+                        const resp = row.querySelector(SELECTORS.ASSISTANT_RESPONSE);
                         if (resp) {
                             console.log(`[CHAT_EXTRACT] Processing assistant row ${rowId}`);
                             let mdTextBuf = [];
@@ -348,9 +385,7 @@ class AutoVSCodeCopilot:
                                 mdHtmlBuf = [];
                             };
 
-                            const parts = resp.querySelectorAll(
-                                ':scope > .rendered-markdown, :scope > .chat-tool-invocation-part, :scope > .chat-tool-result-part, :scope > .chat-confirmation-widget'
-                            );
+                            const parts = resp.querySelectorAll(SELECTORS.CHAT_PARTS);
                             console.log(`[CHAT_EXTRACT] Found ${parts.length} parts in assistant row`);
                             
                             for (const el of parts) {
@@ -361,7 +396,7 @@ class AutoVSCodeCopilot:
                                     if (h) mdHtmlBuf.push(h);
                                 } else if (el.classList.contains('chat-confirmation-widget')) {
                                     flush();
-                                    const title = el.querySelector('.chat-confirmation-widget-title .rendered-markdown');
+                                    const title = el.querySelector(SELECTORS.CONFIRMATION_TITLE);
                                     const t = title && title.textContent ? title.textContent.trim() : '';
                                     const h = title && title.innerHTML ? title.innerHTML : (el.innerHTML || '');
                                     if (t || h) {
@@ -414,7 +449,7 @@ class AutoVSCodeCopilot:
                                     activeObservers.delete(observer);
                                     console.log(`[CHAT_EXTRACT] DOM mutations detected after scroll`);
                                     scrollResolve(true);
-                                }, 100);
+                                }, MUTATION_DEBOUNCE_DELAY);
                             }
                         });
                         
@@ -434,10 +469,7 @@ class AutoVSCodeCopilot:
                         if (scrollAttempts === 0) {
                             // First attempt: Go to the very beginning
                             keyEvent = new KeyboardEvent('keydown', {
-                                key: 'Home',
-                                code: 'Home',
-                                keyCode: 36,
-                                which: 36,
+                                ...KEY_EVENTS.HOME,
                                 bubbles: true,
                                 cancelable: true
                             });
@@ -445,10 +477,7 @@ class AutoVSCodeCopilot:
                         } else {
                             // Subsequent attempts: Use ArrowDown to incrementally scroll
                             keyEvent = new KeyboardEvent('keydown', {
-                                key: 'ArrowDown',
-                                code: 'ArrowDown',
-                                keyCode: 40,
-                                which: 40,
+                                ...KEY_EVENTS.ARROW_DOWN,
                                 bubbles: true,
                                 cancelable: true
                             });
@@ -481,7 +510,7 @@ class AutoVSCodeCopilot:
                                 console.log(`[CHAT_EXTRACT] No mutations detected after ${keyEvent.key}, continuing...`);
                                 scrollResolve(false);
                             }
-                        }, 300);
+                        }, SCROLL_FALLBACK_TIMEOUT);
                     });
                 };
 
@@ -500,10 +529,10 @@ class AutoVSCodeCopilot:
                         }
                         
                         // Stop conditions - keep pressing down until no progress for 20 key presses
-                        if (noNewRowsCount >= 20 || scrollAttempts >= 200) {
+                        if (noNewRowsCount >= MAX_NO_NEW_ROWS_COUNT || scrollAttempts >= MAX_SCROLL_ATTEMPTS) {
                             console.log(`[CHAT_EXTRACT] Stopping: noNewRowsCount=${noNewRowsCount}, scrollAttempts=${scrollAttempts}, scrollTop=${listContainer.scrollTop}`);
                             cleanupAll();
-                            const loading = !!document.querySelector('div.chat-response-loading');
+                            const loading = !!document.querySelector(SELECTORS.LOADING_INDICATOR);
                             return resolve({ messages, loading, confirmation: confirmationFound });
                         }
                         
@@ -513,7 +542,7 @@ class AutoVSCodeCopilot:
                             
                             // Continue regardless of mutations - only stop after 20 consecutive failed attempts
                             // Continue processing
-                            safeSetTimeout(processStep, 50);
+                            safeSetTimeout(processStep, PROCESS_STEP_DELAY);
                         }).catch(error => {
                             console.error('[CHAT_EXTRACT] Error in scrollAndWait:', error);
                             cleanupAll();
@@ -536,9 +565,9 @@ class AutoVSCodeCopilot:
                 safeSetTimeout(() => {
                     console.log(`[CHAT_EXTRACT] Safety timeout reached after 60s`);
                     cleanupAll();
-                    const loading = !!document.querySelector('div.chat-response-loading');
+                    const loading = !!document.querySelector(SELECTORS.LOADING_INDICATOR);
                     resolve({ messages, loading, confirmation: confirmationFound });
-                }, 60000); // Increased to 60s to accommodate 200 scroll attempts
+                }, SAFETY_TIMEOUT); // Increased to 60s to accommodate 200 scroll attempts
             });
         })()
         """)
