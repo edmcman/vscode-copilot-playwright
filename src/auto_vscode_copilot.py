@@ -140,9 +140,12 @@ class AutoVSCodeCopilot:
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         logger.debug(f'Writing chat message: "{message}"')
-        input_locator = self.page.locator('div.chat-editor-container')
+
+        input_selector = 'div.chat-input-container'
+        input_locator = self.page.locator(input_selector)
         await input_locator.wait_for(state='visible', timeout=1000)
-        await input_locator.focus()
+        logger.debug(f"Focusing on {input_locator}")
+        await input_locator.click()
         for c in message:
             if c == '\n':
                 await self.page.keyboard.press('Shift+Enter')
@@ -224,7 +227,7 @@ class AutoVSCodeCopilot:
                 
                 // Configuration constants
                 const MAX_SCROLL_ATTEMPTS = 200;
-                const MAX_NO_NEW_ROWS_COUNT = 1;
+                const MAX_NO_NEW_ROWS_COUNT = 20;
                 const MUTATION_DEBOUNCE_DELAY = 100;
                 const SCROLL_FALLBACK_TIMEOUT = 300;
                 const PROCESS_STEP_DELAY = 100;
@@ -274,7 +277,6 @@ class AutoVSCodeCopilot:
 
                 // Store original state for cleanup
                 const originalScrollTop = listContainer.scrollTop;
-                const originalFocus = document.activeElement;
                 
                 // Cleanup function to ensure proper state restoration
                 const cleanup = () => {
@@ -283,14 +285,7 @@ class AutoVSCodeCopilot:
                     if (listContainer) {
                         listContainer.scrollTop = originalScrollTop;
                     }
-                    // Restore original focus
-                    if (originalFocus && originalFocus.focus) {
-                        try {
-                            originalFocus.focus();
-                        } catch (e) {
-                            console.log('[CHAT_EXTRACT] Could not restore focus:', e);
-                        }
-                    }
+                    // Don't attempt to restore focus - let VS Code manage it
                 };
 
                 const messages = [];
@@ -423,143 +418,57 @@ class AutoVSCodeCopilot:
                     return newRowsFound;
                 };
 
-                const scrollAndWait = () => {
-                    return new Promise((scrollResolve) => {
-                        if (isFinished) return scrollResolve(false);
-                        
-                        let mutationTimeout;
-                        let hasChanges = false;
-                        
-                        const observer = new MutationObserver((mutations) => {
-                            if (isFinished) return;
-                            
-                            for (const mutation of mutations) {
-                                if (mutation.type === 'childList' && 
-                                    (mutation.target.classList?.contains('monaco-list-rows') ||
-                                     mutation.target.closest('.monaco-list-rows'))) {
-                                    hasChanges = true;
-                                    break;
-                                }
-                            }
-                            
-                            if (hasChanges && !isFinished) {
-                                clearTimeout(mutationTimeout);
-                                mutationTimeout = safeSetTimeout(() => {
-                                    observer.disconnect();
-                                    activeObservers.delete(observer);
-                                    console.log(`[CHAT_EXTRACT] DOM mutations detected after scroll`);
-                                    scrollResolve(true);
-                                }, MUTATION_DEBOUNCE_DELAY);
-                            }
-                        });
-                        
-                        activeObservers.add(observer);
-                        observer.observe(session, {
-                            childList: true,
-                            subtree: true,
-                            attributes: false
-                        });
-                        
-                        // Use keyboard events to trigger virtual scrolling
-                        // Focus the list container first
-                        listContainer.focus();
-                        
-                        let keyEvent;
-                        console.log(`[CHAT_EXTRACT] Attempt ${scrollAttempts}`);
-                        if (scrollAttempts === 0) {
-                            // First attempt: Go to the very beginning
-                            keyEvent = new KeyboardEvent('keydown', {
-                                ...KEY_EVENTS.HOME,
-                                bubbles: true,
-                                cancelable: true
-                            });
-                            console.log(`[CHAT_EXTRACT] Sending Home to go to beginning (attempt ${scrollAttempts + 1})`);
-                        } else {
-                            // Subsequent attempts: Use ArrowDown to incrementally scroll
-                            keyEvent = new KeyboardEvent('keydown', {
-                                ...KEY_EVENTS.ARROW_DOWN,
-                                bubbles: true,
-                                cancelable: true
-                            });
-                            console.log(`[CHAT_EXTRACT] Sending ArrowDown to scroll incrementally (attempt ${scrollAttempts + 1})`);
-                        }
-                        
-                        const currentScrollTop = listContainer.scrollTop;
-                        console.log(`[CHAT_EXTRACT] Current scrollTop=${currentScrollTop}`);
-                        
-                        // Dispatch the keyboard event to trigger virtual scrolling
-                        listContainer.dispatchEvent(keyEvent);
-                        
-                        // Also try the keyup event for completeness
-                        const keyUpEvent = new KeyboardEvent('keyup', {
-                            key: keyEvent.key,
-                            code: keyEvent.code,
-                            keyCode: keyEvent.keyCode,
-                            which: keyEvent.which,
-                            ctrlKey: keyEvent.ctrlKey,
-                            bubbles: true,
-                            cancelable: true
-                        });
-                        listContainer.dispatchEvent(keyUpEvent);
-                        
-                        // Fallback timeout in case no mutations occur
-                        safeSetTimeout(() => {
-                            if (!hasChanges && !isFinished) {
-                                observer.disconnect();
-                                activeObservers.delete(observer);
-                                console.log(`[CHAT_EXTRACT] No mutations detected after ${keyEvent.key}, continuing...`);
-                                scrollResolve(false);
-                            }
-                        }, SCROLL_FALLBACK_TIMEOUT);
-                    });
+                // Simple initialization: scroll to top first
+                const scrollToTop = () => {
+                    console.log('[CHAT_EXTRACT] Scrolling to top...');
+                    listContainer.focus();
+                    const homeEvent = new KeyboardEvent('keydown', { ...KEY_EVENTS.HOME, bubbles: true, cancelable: true });
+                    listContainer.dispatchEvent(homeEvent);
                 };
-
-                const processStep = () => {
+                
+                const processLoop = () => {
                     if (isFinished) return;
                     
                     try {
-                        // Extract currently visible content
+                        // Extract current messages
                         const newRowsFound = extractCurrentlyVisibleRows();
                         
-                        // Check if we should continue scrolling
+                        // Scroll down for next iteration
+                        listContainer.focus();
+                        console.log(`[CHAT_EXTRACT] Pressing down key now...`);
+                        const arrowEvent = new KeyboardEvent('keydown', { ...KEY_EVENTS.ARROW_DOWN, bubbles: true, cancelable: true });
+                        listContainer.dispatchEvent(arrowEvent);
+                        
+                        // Handle progress and determine if we should continue
                         if (newRowsFound === 0) {
                             noNewRowsCount++;
                         } else {
                             noNewRowsCount = 0;
                         }
                         
-                        // Stop conditions - keep pressing down until no progress for 20 key presses
+                        // Stop conditions
                         if (noNewRowsCount >= MAX_NO_NEW_ROWS_COUNT || scrollAttempts >= MAX_SCROLL_ATTEMPTS) {
-                            console.log(`[CHAT_EXTRACT] Stopping: noNewRowsCount=${noNewRowsCount}, scrollAttempts=${scrollAttempts}, scrollTop=${listContainer.scrollTop}`);
+                            console.log(`[CHAT_EXTRACT] Stopping: newRows=${newRowsFound}, noNewRowsCount=${noNewRowsCount}, attempts=${scrollAttempts}`);
                             cleanupAll();
                             const loading = !!document.querySelector(SELECTORS.LOADING_INDICATOR);
                             return resolve({ messages, loading, confirmation: confirmationFound });
                         }
                         
-                        // Try to scroll to reveal more content
-                        scrollAndWait().then(hadMutations => {
-                            if (isFinished) return;
-                            
-                            // Continue regardless of mutations - only stop after 20 consecutive failed attempts
-                            // Continue processing
-                            safeSetTimeout(processStep, PROCESS_STEP_DELAY);
-                        }).catch(error => {
-                            console.error('[CHAT_EXTRACT] Error in scrollAndWait:', error);
-                            cleanupAll();
-                            reject(error);
-                        });
                         scrollAttempts++;
-
+                        
+                        // Continue the loop
+                        safeSetTimeout(processLoop, PROCESS_STEP_DELAY);
                         
                     } catch (error) {
-                        console.error('[CHAT_EXTRACT] Error in processStep:', error);
+                        console.error('[CHAT_EXTRACT] Error in processLoop:', error);
                         cleanupAll();
                         reject(error);
                     }
                 };
-
-                // Start the process
-                processStep();
+                
+                // Start: scroll to top, then begin loop
+                scrollToTop();
+                safeSetTimeout(processLoop, PROCESS_STEP_DELAY);
                 
                 // Safety timeout
                 safeSetTimeout(() => {
@@ -635,7 +544,7 @@ class AutoVSCodeCopilot:
 
         # Final extraction
         logger.debug("Calling _extract_chat_messages_helper for final extraction...")
-        result = await self._extract_chat_messages_helper()
+        result = await self._extract_chat_messages_helper()        
         messages = result.get('messages', [])
         logger.debug(f"Extracted {len(messages)} total messages")
         return messages
