@@ -94,11 +94,11 @@ class AutoVSCodeCopilot:
         if not pages:
             raise RuntimeError("No VS Code pages found")
         self.page = pages[0]
-        # Add browser console log handler for debugging page.evaluate
-        def handle_console_msg(msg):
-            logger.debug(f"[Browser Console][{msg.type}] {msg.text}")
-        # Uncomment the next line to enable console logging
-        # self.page.on("console", handle_console_msg)
+        # Add browser console log handler for debugging page.evaluate only if debug level
+        if logger.isEnabledFor(logging.DEBUG):
+            def handle_console_msg(msg):
+                logger.debug(f"[Browser Console][{msg.type}] {msg.text}")
+            self.page.on("console", handle_console_msg)
         try:
             await self.page.wait_for_selector('.monaco-workbench', timeout=30000)
         except PlaywrightTimeoutError:
@@ -227,11 +227,11 @@ class AutoVSCodeCopilot:
                 
                 // Configuration constants
                 const MAX_SCROLL_ATTEMPTS = 200;
-                const MAX_NO_NEW_ROWS_COUNT = 20;
                 const MUTATION_DEBOUNCE_DELAY = 100;
                 const SCROLL_FALLBACK_TIMEOUT = 300;
-                const PROCESS_STEP_DELAY = 100;
+                const PROCESS_STEP_DELAY = 50; // shorten
                 const SAFETY_TIMEOUT = 60000; // 60 seconds
+                const FOCUS_SETTLE_DELAY_MS = 50; // shorten
                 
                 // DOM selectors
                 const SELECTORS = {
@@ -433,31 +433,28 @@ class AutoVSCodeCopilot:
                         // Extract current messages
                         const newRowsFound = extractCurrentlyVisibleRows();
                         
+                        // Save current focused element before scrolling
+                        const beforeFocus = document.querySelector('div.focused');
+                        
                         // Scroll down for next iteration
                         listContainer.focus();
-                        console.log(`[CHAT_EXTRACT] Pressing down key now...`);
                         const arrowEvent = new KeyboardEvent('keydown', { ...KEY_EVENTS.ARROW_DOWN, bubbles: true, cancelable: true });
                         listContainer.dispatchEvent(arrowEvent);
                         
-                        // Handle progress and determine if we should continue
-                        if (newRowsFound === 0) {
-                            noNewRowsCount++;
-                        } else {
-                            noNewRowsCount = 0;
-                        }
-                        
-                        // Stop conditions
-                        if (noNewRowsCount >= MAX_NO_NEW_ROWS_COUNT || scrollAttempts >= MAX_SCROLL_ATTEMPTS) {
-                            console.log(`[CHAT_EXTRACT] Stopping: newRows=${newRowsFound}, noNewRowsCount=${noNewRowsCount}, attempts=${scrollAttempts}`);
-                            cleanupAll();
-                            const loading = !!document.querySelector(SELECTORS.LOADING_INDICATOR);
-                            return resolve({ messages, loading, confirmation: confirmationFound });
-                        }
-                        
-                        scrollAttempts++;
-                        
-                        // Continue the loop
-                        safeSetTimeout(processLoop, PROCESS_STEP_DELAY);
+                        // Wait a short time for focus to update
+                        safeSetTimeout(() => {
+                            const afterFocus = document.querySelector('div.focused');
+                            // Stop if focus did not change
+                            if (beforeFocus === afterFocus || scrollAttempts >= MAX_SCROLL_ATTEMPTS) {
+                                console.log(`[CHAT_EXTRACT] Stopping: focused element did not change, attempts=${scrollAttempts}`);
+                                cleanupAll();
+                                const loading = !!document.querySelector(SELECTORS.LOADING_INDICATOR);
+                                return resolve({ messages, loading, confirmation: confirmationFound });
+                            }
+                            scrollAttempts++;
+                            // Continue the loop
+                            safeSetTimeout(processLoop, PROCESS_STEP_DELAY);
+                        }, FOCUS_SETTLE_DELAY_MS);
                         
                     } catch (error) {
                         console.error('[CHAT_EXTRACT] Error in processLoop:', error);
