@@ -1,4 +1,5 @@
 import requests
+import socket
 import time
 from pathlib import Path
 import subprocess
@@ -12,6 +13,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("AutoVSCodeCopilot")
 
+def _is_port_in_use(port):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(('localhost', port)) == 0
 
 class AutoVSCodeCopilot:
     def __init__(self, *args, **kwargs):
@@ -36,13 +40,30 @@ class AutoVSCodeCopilot:
         self.context = None
         self.page = None
         self.vscode_process = None
-        self.vscode_port = 9222
         self.user_data_dir = Path(__file__).parent.parent / ".vscode-playwright-data"
         self.playwright = None
-        logger.info(f"Using persistent VS Code user data directory: {self.user_data_dir}")
-        logger.info("Launching VS Code desktop with remote debugging...")
-        self._launch_vscode(workspace_path)
-        self._wait_for_vscode_to_start()
+        # Try ports from 9222 up to 9300, check with socket before launching
+        port = 9222
+        max_port = 9300
+        while port <= max_port:
+            if _is_port_in_use(port):
+                logger.info(f"Port {port} is already in use, trying next...")
+                port += 1
+                continue
+            self.vscode_port = port
+            logger.info(f"Using persistent VS Code user data directory: {self.user_data_dir}")
+            logger.info(f"Launching VS Code desktop with remote debugging on port {port}...")
+            self._launch_vscode(workspace_path)
+            try:
+                self._wait_for_vscode_to_start()
+                break
+            except RuntimeError as e:
+                logger.warning(f"VS Code failed to start: {e}")
+                if self.vscode_process and self.vscode_process.poll() is None:
+                    self.vscode_process.terminate()
+                raise RuntimeError(f"Port {port} is in use or VS Code failed to start: {e}")
+        else:
+            raise RuntimeError(f"No available port found for VS Code remote debugging between 9222 and {max_port}.")
         await self.initialize()
         return self
 
