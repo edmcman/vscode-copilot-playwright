@@ -229,10 +229,10 @@ class AutoVSCodeCopilot:
                 const MAX_SCROLL_ATTEMPTS = 200;
                 const MUTATION_DEBOUNCE_DELAY = 100;
                 const SCROLL_FALLBACK_TIMEOUT = 300;
-                const PROCESS_STEP_DELAY = 50; // shorten
+                const PROCESS_STEP_DELAY = 50;
                 const SAFETY_TIMEOUT = 60000; // 60 seconds
-                const FOCUS_SETTLE_DELAY_MS = 50; // shorten
-                
+                const FOCUS_SETTLE_DELAY_MS = 50;
+
                 // DOM selectors
                 const SELECTORS = {
                     INTERACTIVE_SESSION: 'div.interactive-session',
@@ -338,11 +338,14 @@ class AutoVSCodeCopilot:
                         const rowId = row.getAttribute('data-index') || row.offsetTop.toString();
                         if (seenRowIds.has(rowId)) continue;
                         
+                        console.log(`[CHAT_EXTRACT] Processing visible row ${rowId}`)
+
                         seenRowIds.add(rowId);
                         newRowsFound++;
                         
                         // User row
                         const user = row.querySelector(SELECTORS.USER_REQUEST);
+                        const resp = row.querySelector(SELECTORS.ASSISTANT_RESPONSE);
                         if (user) {
                             console.log(`[CHAT_EXTRACT] Processing user row ${rowId}`);
                             const texts = [];
@@ -361,10 +364,8 @@ class AutoVSCodeCopilot:
                             }
                             continue;
                         }
-
                         // Assistant row
-                        const resp = row.querySelector(SELECTORS.ASSISTANT_RESPONSE);
-                        if (resp) {
+                        else if (resp) {
                             console.log(`[CHAT_EXTRACT] Processing assistant row ${rowId}`);
                             let mdTextBuf = [];
                             let mdHtmlBuf = [];
@@ -411,6 +412,8 @@ class AutoVSCodeCopilot:
                                 }
                             }
                             flush();
+                        } else {
+                            console.log(`[CHAT_EXTRACT] Unknown row: ${rowId}`);
                         }
                     }
                     
@@ -434,19 +437,21 @@ class AutoVSCodeCopilot:
                         const newRowsFound = extractCurrentlyVisibleRows();
                         
                         // Save current focused element before scrolling
-                        const beforeFocus = document.querySelector('div.focused');
-                        
+                        const beforeFocus = session.querySelector('div.focused');
+
                         // Scroll down for next iteration
                         listContainer.focus();
+                        console.log(`[CHAT_EXTRACT] Scrolling down`);
                         const arrowEvent = new KeyboardEvent('keydown', { ...KEY_EVENTS.ARROW_DOWN, bubbles: true, cancelable: true });
                         listContainer.dispatchEvent(arrowEvent);
                         
                         // Wait a short time for focus to update
                         safeSetTimeout(() => {
-                            const afterFocus = document.querySelector('div.focused');
-                            // Stop if focus did not change
+                            const afterFocus = session.querySelector('div.focused');
+                            // Stop if selection did not change
                             if (beforeFocus === afterFocus || scrollAttempts >= MAX_SCROLL_ATTEMPTS) {
-                                console.log(`[CHAT_EXTRACT] Stopping: focused element did not change, attempts=${scrollAttempts}`);
+                                console.log(`[CHAT_EXTRACT] Stopping: focus element did not change, attempts=${scrollAttempts}`);
+                                console.log(`[CHAT_EXTRACT] before=${beforeFocus.innerText}`);
                                 cleanupAll();
                                 const loading = !!document.querySelector(SELECTORS.LOADING_INDICATOR);
                                 return resolve({ messages, loading, confirmation: confirmationFound });
