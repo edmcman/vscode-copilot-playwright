@@ -522,7 +522,7 @@ class AutoVSCodeCopilot:
                 () => new Promise((resolve) => {
                     const check = () => {
                         const loading = !!document.querySelector('div.chat-response-loading');
-                        const confirmation = !!document.querySelector('div.chat-confirmation-widget a.monaco-button[aria-label^="Continue"]');
+                        const confirmation = !!Array.from(document.querySelectorAll('div.chat-confirmation-widget a.monaco-button')).find(el => el.textContent.trim() === 'Continue');
                         if (!loading || confirmation) {
                             return { loading, confirmation };
                         }
@@ -556,8 +556,9 @@ class AutoVSCodeCopilot:
                 raise RuntimeError("Timed out waiting for chat to progress (loading end or confirmation).")
 
             if state.get("confirmation"):
-                logger.debug("Confirmation prompt detected, clicking Continue...")
-                await self.page.locator('a.monaco-button[aria-label^="Continue"]').click()
+                logger.debug("Confirmation prompt detected, clicking Continue by innerText...")
+                # Find the button with innerText 'Continue' and click it
+                await self.page.locator('div.chat-confirmation-widget a.monaco-button', has_text="Continue").click()
                 # Loop again: another loading phase may start after confirmation
                 continue
 
