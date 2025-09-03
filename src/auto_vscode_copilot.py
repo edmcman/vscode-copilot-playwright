@@ -1,3 +1,4 @@
+import asyncio
 import requests
 import socket
 import time
@@ -181,7 +182,23 @@ class AutoVSCodeCopilot:
         await send_button_locator.wait_for(state='visible', timeout=1000)
         logger.debug('Clicking send button using Locator...')
         await send_button_locator.click()
+
+        # Sometimes VS Code will pop-up a trust/security dialog for MCP servers.
+        # We need to handle this case by waiting for the dialog to appear
+        trust_locator = self.page.get_by_role("button", name="Trust", exact=True)
+        trust_locator_visible = asyncio.create_task(trust_locator.wait_for(state='visible', timeout=1000))
+        send_button_disappears = asyncio.create_task(send_button_locator.wait_for(state='hidden', timeout=1000))
+
+        done, pending = await asyncio.wait([trust_locator_visible, send_button_disappears], return_when=asyncio.FIRST_COMPLETED)
+        for p in pending: p.cancel()
+
+        if trust_locator_visible in done:
+            logger.debug('Trust and run MCP server dialog is visible.')
+            await trust_locator.click()
+
+        # Await the send button disappearing
         await send_button_locator.wait_for(state='hidden', timeout=1000)
+        # And reappearing
         await send_button_locator.wait_for(state='visible', timeout=60000)
         logger.debug('✅ Chat message sent successfully!')
 
@@ -547,7 +564,7 @@ class AutoVSCodeCopilot:
                     const timer = setTimeout(() => {
                         observer.disconnect();
                         resolve({ loading: false, confirmation: false, timeout: true });
-                    }, 30000);
+                    }, 60000);
                 })
             """)
 
@@ -573,13 +590,17 @@ class AutoVSCodeCopilot:
         result = await self._extract_chat_messages_helper()        
         messages = result.get('messages', [])
         logger.debug(f"Extracted {len(messages)} total messages")
+        logger.debug(f"Last msg: {messages[-1]['text']}")
+        #import pdb
+        #pdb.set_trace()
         return messages
 
     async def pick_copilot_picker_helper(self, picker_aria_label, option_label=None):
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         picker_locator = self.page.locator(f'a.action-label[aria-label*="{picker_aria_label}"]')
-        await picker_locator.wait_for(state='visible', timeout=10000)
+        # Sometimes it takes a while to load the models
+        await picker_locator.wait_for(state='visible', timeout=60000)
         await picker_locator.click()
         context_locator = self.page.locator('div.context-view div.monaco-list')
         await context_locator.wait_for(state='visible', timeout=10000)
