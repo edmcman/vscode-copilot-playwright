@@ -89,7 +89,7 @@ class AutoVSCodeCopilot:
             logger.debug(f"Opening workspace: {workspace_path}")
         vscode_executable = "code"
         logger.debug(f"Executing VS Code: {vscode_executable} {' '.join(vscode_args)}")
-        self.vscode_process = subprocess.Popen([vscode_executable] + vscode_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.vscode_process = subprocess.Popen([vscode_executable] + vscode_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     def _wait_for_vscode_to_start(self):
         logger.debug("Waiting for VS Code to start...")
@@ -102,6 +102,7 @@ class AutoVSCodeCopilot:
             except Exception:
                 pass
             time.sleep(1)
+        logger.warning(f"VS Code failed to start.\nstdout:{self.vscode_process.stdout.read().decode()}\nstderr:{self.vscode_process.stderr.read().decode()}")
         raise RuntimeError(f"VS Code failed to start or debugging port {self.vscode_port} is not accessible.")
 
     async def _connect_to_vscode(self):
@@ -260,7 +261,7 @@ class AutoVSCodeCopilot:
         # Extract all message parts handling virtual scrolling via DOM observer and programmatic scrolling
         return await self.page.evaluate("""
         (() => {
-            return new Promise((resolve, reject) => {
+            return new Promise(async (resolve, reject) => {
                 console.log('[CHAT_EXTRACT] Starting message extraction with virtual scrolling...');
                 
                 // Configuration constants
@@ -271,10 +272,12 @@ class AutoVSCodeCopilot:
                 const SAFETY_TIMEOUT = 60000; // 60 seconds
                 const FOCUS_SETTLE_DELAY_MS = 50;
 
+                const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
                 // DOM selectors
                 const SELECTORS = {
                     INTERACTIVE_SESSION: 'div.interactive-session',
-                    MONACO_LIST: 'div.monaco-list',
+                    MONACO_LIST: 'div.monaco-list[aria-label="Chat"]',
                     MONACO_LIST_ROWS: 'div.monaco-list-rows > div.monaco-list-row',
                     USER_REQUEST: '.interactive-request > .value',
                     ASSISTANT_RESPONSE: '.interactive-response > .value',
@@ -460,31 +463,31 @@ class AutoVSCodeCopilot:
                 };
 
                 // Simple initialization: scroll to top first
-                const scrollToTop = () => {
+                const scrollToTop = async () => {
                     console.log('[CHAT_EXTRACT] Scrolling to top...');
                     listContainer.focus();
+                    await delay(FOCUS_SETTLE_DELAY_MS);
                     const homeEvent = new KeyboardEvent('keydown', { ...KEY_EVENTS.HOME, bubbles: true, cancelable: true });
                     listContainer.dispatchEvent(homeEvent);
                 };
                 
-                const processLoop = () => {
-                    if (isFinished) return;
-                    
-                    try {
-                        // Extract current messages
-                        const newRowsFound = extractCurrentlyVisibleRows();
-                        
-                        // Save current focused element before scrolling
-                        const beforeFocus = session.querySelector('div.focused');
+                const processLoop = async () => {
+                    while (!isFinished) {
+                        try {
+                            // Extract current messages
+                            const newRowsFound = extractCurrentlyVisibleRows();
+                            
+                            // Save current focused element before scrolling
+                            const beforeFocus = session.querySelector('div.focused');
 
-                        // Scroll down for next iteration
-                        listContainer.focus();
-                        console.log(`[CHAT_EXTRACT] Scrolling down`);
-                        const arrowEvent = new KeyboardEvent('keydown', { ...KEY_EVENTS.ARROW_DOWN, bubbles: true, cancelable: true });
-                        listContainer.dispatchEvent(arrowEvent);
-                        
-                        // Wait a short time for focus to update
-                        safeSetTimeout(() => {
+                            // Scroll down for next iteration
+                            listContainer.focus();
+                            console.log(`[CHAT_EXTRACT] Scrolling down`);
+                            const arrowEvent = new KeyboardEvent('keydown', { ...KEY_EVENTS.ARROW_DOWN, bubbles: true, cancelable: true });
+                            listContainer.dispatchEvent(arrowEvent);
+                            
+                            // Wait a short time for focus to update
+                            await delay(FOCUS_SETTLE_DELAY_MS);
                             const afterFocus = session.querySelector('div.focused');
                             // Stop if selection did not change
                             if (beforeFocus === afterFocus || scrollAttempts >= MAX_SCROLL_ATTEMPTS) {
@@ -495,20 +498,22 @@ class AutoVSCodeCopilot:
                                 return resolve({ messages, loading, confirmation: confirmationFound });
                             }
                             scrollAttempts++;
-                            // Continue the loop
-                            safeSetTimeout(processLoop, PROCESS_STEP_DELAY);
-                        }, FOCUS_SETTLE_DELAY_MS);
-                        
-                    } catch (error) {
-                        console.error('[CHAT_EXTRACT] Error in processLoop:', error);
-                        cleanupAll();
-                        reject(error);
+                            // Wait for next iteration
+                            await delay(PROCESS_STEP_DELAY);
+                        } catch (error) {
+                            console.error('[CHAT_EXTRACT] Error in processLoop:', error);
+                            cleanupAll();
+                            reject(error);
+                            return;
+                        }
                     }
                 };
                 
                 // Start: scroll to top, then begin loop
-                scrollToTop();
-                safeSetTimeout(processLoop, PROCESS_STEP_DELAY);
+                await scrollToTop();
+                console.log(`[CHAT_EXTRACT] scrolltop = ${listContainer.scrollTop} old = ${originalScrollTop}`);
+                await delay(PROCESS_STEP_DELAY);
+                await processLoop();
                 
                 // Safety timeout
                 safeSetTimeout(() => {
