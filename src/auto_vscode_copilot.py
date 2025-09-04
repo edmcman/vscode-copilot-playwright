@@ -491,8 +491,9 @@ class AutoVSCodeCopilot:
                             const newRowsFound = extractCurrentlyVisibleRows();
                             
                             // Save current focused element before scrolling
-                            const beforeFocus = session.querySelector('div.focused');
-
+                            const beforeFocus = session.querySelector('div.focused')?.getAttribute('data-index');
+                            console.log(`[CHAT_EXTRACT] before=${beforeFocus}`);
+                                        
                             // Scroll down for next iteration
                             listContainer.focus();
                             console.log(`[CHAT_EXTRACT] Scrolling down`);
@@ -502,14 +503,17 @@ class AutoVSCodeCopilot:
                             // Wait a short time for focus to update
                             try {
                                 await sleepUntil(() => {
-                                    const afterFocus = session.querySelector('div.focused');
+                                    const afterFocus = session.querySelector('div.focused')?.getAttribute('data-index');
+                                    if (beforeFocus != afterFocus) {
+                                        console.log(`[CHAT_EXTRACT] Focus change detected; before=${beforeFocus} after=${afterFocus}`);
+                                    }
                                     return beforeFocus !== afterFocus;
                                 }, FOCUS_SETTLE_DELAY_MS);
                                 console.log(`[CHAT_EXTRACT] Focus change detected`);
                                 // Fallthrough
                             } catch (error) {
                                 console.log(`[CHAT_EXTRACT] Stopping: focus element did not change, attempts=${scrollAttempts}`);
-                                console.log(`[CHAT_EXTRACT] before=${beforeFocus.innerText}`);
+                                console.log(`[CHAT_EXTRACT] before/after=${beforeFocus}`);
                                 cleanupAll();
                                 const loading = !!document.querySelector(SELECTORS.LOADING_INDICATOR);
                                 return resolve({ messages, loading, confirmation: confirmationFound });
