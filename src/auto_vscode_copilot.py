@@ -266,11 +266,9 @@ class AutoVSCodeCopilot:
                 
                 // Configuration constants
                 const MAX_SCROLL_ATTEMPTS = 200;
-                const MUTATION_DEBOUNCE_DELAY = 100;
-                const SCROLL_FALLBACK_TIMEOUT = 300;
                 const PROCESS_STEP_DELAY = 50;
-                const SAFETY_TIMEOUT = 60000; // 60 seconds
-                const FOCUS_SETTLE_DELAY_MS = 50;
+                const SAFETY_TIMEOUT = 60000;
+                const FOCUS_SETTLE_DELAY_MS = 200;
 
                 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -471,6 +469,21 @@ class AutoVSCodeCopilot:
                     listContainer.dispatchEvent(homeEvent);
                 };
                 
+                const sleepUntil = async (f, timeoutMs) => {{
+                    return new Promise((resolve, reject) => {{
+                        const timeWas = new Date();
+                        const wait = setInterval(() => {{
+                            if (f()) {{
+                                clearInterval(wait);
+                                resolve();
+                            }} else if (new Date() - timeWas > timeoutMs) {{
+                                clearInterval(wait);
+                                reject(new Error('Timeout waiting for condition'));
+                            }}
+                        }}, 20);
+                    }});
+                }};
+
                 const processLoop = async () => {
                     while (!isFinished) {
                         try {
@@ -487,10 +500,14 @@ class AutoVSCodeCopilot:
                             listContainer.dispatchEvent(arrowEvent);
                             
                             // Wait a short time for focus to update
-                            await delay(FOCUS_SETTLE_DELAY_MS);
-                            const afterFocus = session.querySelector('div.focused');
-                            // Stop if selection did not change
-                            if (beforeFocus === afterFocus || scrollAttempts >= MAX_SCROLL_ATTEMPTS) {
+                            try {
+                                await sleepUntil(() => {
+                                    const afterFocus = session.querySelector('div.focused');
+                                    return beforeFocus !== afterFocus;
+                                }, FOCUS_SETTLE_DELAY_MS);
+                                console.log(`[CHAT_EXTRACT] Focus change detected`);
+                                // Fallthrough
+                            } catch (error) {
                                 console.log(`[CHAT_EXTRACT] Stopping: focus element did not change, attempts=${scrollAttempts}`);
                                 console.log(`[CHAT_EXTRACT] before=${beforeFocus.innerText}`);
                                 cleanupAll();
