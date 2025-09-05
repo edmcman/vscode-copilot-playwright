@@ -72,6 +72,7 @@ class AutoVSCodeCopilot:
         """Initialize the async Playwright connection. Call this after creating the instance."""
         await self._connect_to_vscode()
         await self._show_copilot_chat_helper()
+        await self._initialize_chat_observer()
         logger.info("VS Code loaded successfully!")
 
     def _launch_vscode(self, workspace_path=None):
@@ -250,299 +251,296 @@ class AutoVSCodeCopilot:
         assert self.page is not None, "VS Code not launched. Call launch() first."
         return (await self.page.locator('div.chat-response-loading').count()) > 0
 
-    async def _extract_chat_messages_helper(self):
+    def _parse_user_message(self, element_data):
+        """Parse user message from DOM element data"""
+        texts = [part['text'] for part in element_data.get('rendered_markdown', []) if part['text'].strip()]
+        htmls = [part['html'] for part in element_data.get('rendered_markdown', []) if part['html'].strip()]
+        
+        if texts or htmls:
+            text = '\n\n'.join(texts).strip()
+            html = '\n\n'.join(htmls).strip()
+            return {'entity': 'user', 'message': text, 'text': text, 'html': html, 'rowId': element_data['rowId']}
+        return None
+
+    def _parse_assistant_message(self, element_data):
+        """Parse assistant message from DOM element data"""
+        messages = []
+        md_text_buf = []
+        md_html_buf = []
+        
+        def flush_markdown():
+            if md_text_buf or md_html_buf:
+                text = '\n\n'.join(md_text_buf).strip()
+                html = '\n\n'.join(md_html_buf).strip()
+                if text or html:
+                    messages.append({'entity': 'assistant', 'message': text, 'text': text, 'html': html, 'rowId': element_data['rowId']})
+                md_text_buf.clear()
+                md_html_buf.clear()
+
+        for part in element_data.get('parts', []):
+            if part['type'] == 'rendered-markdown':
+                if part['text'].strip():
+                    md_text_buf.append(part['text'].strip())
+                if part['html'].strip():
+                    md_html_buf.append(part['html'])
+            elif part['type'] == 'confirmation':
+                flush_markdown()
+                messages.append({'entity': 'confirmation', 'message': part['text'], 'text': part['text'], 'html': part['html'], 'rowId': element_data['rowId']})
+            elif part['type'] == 'tool':
+                flush_markdown()
+                messages.append({'entity': 'tool', 'message': part['text'], 'text': part['text'], 'html': part['html'], 'rowId': element_data['rowId']})
+        
+        flush_markdown()
+        return messages
+
+    async def _collect_visible_row_data(self):
+        """Collect raw DOM data from visible rows"""
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
-        
-        logger.debug("Starting chat message extraction with virtual scrolling support...")
-        
-        # Extract all message parts handling virtual scrolling via DOM observer and programmatic scrolling
         return await self.page.evaluate("""
-        (() => {
-            return new Promise(async (resolve, reject) => {
-                console.log('[CHAT_EXTRACT] Starting message extraction with virtual scrolling...');
-                
-                // Configuration constants
-                const MAX_SCROLL_ATTEMPTS = 200;
-                const PROCESS_STEP_DELAY = 50;
-                const SAFETY_TIMEOUT = 60000;
-                const FOCUS_SETTLE_DELAY_MS = 200;
-
-                const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-                // DOM selectors
+            () => {
                 const SELECTORS = {
                     INTERACTIVE_SESSION: 'div.interactive-session',
-                    MONACO_LIST: 'div.monaco-list[aria-label="Chat"]',
                     MONACO_LIST_ROWS: 'div.monaco-list-rows > div.monaco-list-row',
                     USER_REQUEST: '.interactive-request > .value',
                     ASSISTANT_RESPONSE: '.interactive-response > .value',
                     RENDERED_MARKDOWN: ':scope > .rendered-markdown',
                     CHAT_PARTS: ':scope > .rendered-markdown, :scope > .chat-tool-invocation-part, :scope > .chat-tool-result-part, :scope > .chat-confirmation-widget',
-                    CONFIRMATION_WIDGET: '.chat-confirmation-widget',
-                    CONFIRMATION_TITLE: '.chat-confirmation-widget-title .rendered-markdown',
-                    LOADING_INDICATOR: 'div.chat-response-loading'
+                    CONFIRMATION_TITLE: '.chat-confirmation-widget-title .rendered-markdown'
                 };
-                
-                // Keyboard event configurations
-                const KEY_EVENTS = {
-                    HOME: {
-                        key: 'Home',
-                        code: 'Home',
-                        keyCode: 36,
-                        which: 36
-                    },
-                    ARROW_DOWN: {
-                        key: 'ArrowDown',
-                        code: 'ArrowDown',
-                        keyCode: 40,
-                        which: 40
-                    }
-                };
-                
+
+                // Find the chat session first, just like the old code
                 const session = document.querySelector(SELECTORS.INTERACTIVE_SESSION);
                 if (!session) {
-                    console.log('[CHAT_EXTRACT] No interactive session found');
-                    return resolve({ messages: [], loading: false, confirmation: false });
+                    console.log('No interactive session found');
+                    return [];
                 }
 
-                const listContainer = session.querySelector(SELECTORS.MONACO_LIST);
-                if (!listContainer) {
-                    console.log('[CHAT_EXTRACT] No monaco-list container found');
-                    return resolve({ messages: [], loading: false, confirmation: false });
-                }
+                // Only look for Monaco list rows within the chat session
+                const rows = Array.from(session.querySelectorAll(SELECTORS.MONACO_LIST_ROWS));
+                return rows.map(row => {
+                    const rowId = row.getAttribute('data-index');
+                    const user = row.querySelector(SELECTORS.USER_REQUEST);
+                    const resp = row.querySelector(SELECTORS.ASSISTANT_RESPONSE);
 
-                // Store original state for cleanup
-                const originalScrollTop = listContainer.scrollTop;
-                
-                // Cleanup function to ensure proper state restoration
-                const cleanup = () => {
-                    console.log('[CHAT_EXTRACT] Performing cleanup...');
-                    // Restore original scroll position
-                    if (listContainer) {
-                        listContainer.scrollTop = originalScrollTop;
-                    }
-                    // Don't attempt to restore focus - let VS Code manage it
-                };
-
-                const messages = [];
-                const seenRowIds = new Set();
-                let confirmationFound = false;
-                let scrollAttempts = 0;
-                let noNewRowsCount = 0;
-                let isFinished = false;
-                
-                // Track all timers and observers for cleanup
-                const activeTimers = new Set();
-                const activeObservers = new Set();
-                
-                const safeSetTimeout = (fn, delay) => {
-                    const timer = setTimeout(() => {
-                        activeTimers.delete(timer);
-                        if (!isFinished) fn();
-                    }, delay);
-                    activeTimers.add(timer);
-                    return timer;
-                };
-                
-                const cleanupAll = () => {
-                    isFinished = true;
-                    // Clear all active timers
-                    for (const timer of activeTimers) {
-                        clearTimeout(timer);
-                    }
-                    activeTimers.clear();
-                    
-                    // Disconnect all observers
-                    for (const observer of activeObservers) {
-                        try {
-                            observer.disconnect();
-                        } catch (e) {
-                            console.log('[CHAT_EXTRACT] Error disconnecting observer:', e);
-                        }
-                    }
-                    activeObservers.clear();
-                    
-                    cleanup();
-                };
-                
-                const extractCurrentlyVisibleRows = () => {
-                    const rows = Array.from(session.querySelectorAll(SELECTORS.MONACO_LIST_ROWS));
-                    console.log(`[CHAT_EXTRACT] Found ${rows.length} visible rows`);
-                    
-                    let newRowsFound = 0;
-                    for (const row of rows) {
-                        const rowId = row.getAttribute('data-index') || row.offsetTop.toString();
-                        if (seenRowIds.has(rowId)) continue;
-                        
-                        console.log(`[CHAT_EXTRACT] Processing visible row ${rowId}`)
-
-                        seenRowIds.add(rowId);
-                        newRowsFound++;
-                        
-                        // User row
-                        const user = row.querySelector(SELECTORS.USER_REQUEST);
-                        const resp = row.querySelector(SELECTORS.ASSISTANT_RESPONSE);
-                        if (user) {
-                            console.log(`[CHAT_EXTRACT] Processing user row ${rowId}`);
-                            const texts = [];
-                            const htmls = [];
-                            for (const el of Array.from(user.querySelectorAll(SELECTORS.RENDERED_MARKDOWN))) {
-                                const t = (el.textContent || '').trim();
-                                const h = el.innerHTML || '';
-                                if (t) texts.push(t);
-                                if (h) htmls.push(h);
+                    if (user) {
+                        const rendered_markdown = Array.from(user.querySelectorAll(SELECTORS.RENDERED_MARKDOWN)).map(el => ({
+                            text: el.textContent || '',
+                            html: el.innerHTML || ''
+                        }));
+                        return { type: 'user', rowId, rendered_markdown };
+                    } else if (resp) {
+                        const parts = Array.from(resp.querySelectorAll(SELECTORS.CHAT_PARTS)).map(el => {
+                            if (el.classList.contains('rendered-markdown')) {
+                                return { type: 'rendered-markdown', text: el.textContent || '', html: el.innerHTML || '' };
+                            } else if (el.classList.contains('chat-confirmation-widget')) {
+                                const title = el.querySelector(SELECTORS.CONFIRMATION_TITLE);
+                                return { type: 'confirmation', text: title?.textContent || '', html: title?.innerHTML || el.innerHTML || '' };
+                            } else {
+                                return { type: 'tool', text: el.textContent || '', html: el.innerHTML || '' };
                             }
-                            if (texts.length || htmls.length) {
-                                const text = texts.join('\\n\\n').trim();
-                                const html = htmls.join('\\n\\n').trim();
-                                messages.push({ entity: 'user', message: text, text, html, rowId });
-                                console.log(`[CHAT_EXTRACT] Added user message: ${text.substring(0, 50)}...`);
-                            }
-                            continue;
-                        }
-                        // Assistant row
-                        else if (resp) {
-                            console.log(`[CHAT_EXTRACT] Processing assistant row ${rowId}`);
-                            let mdTextBuf = [];
-                            let mdHtmlBuf = [];
-                            const flush = () => {
-                                if (!mdTextBuf.length && !mdHtmlBuf.length) return;
-                                const text = mdTextBuf.join('\\n\\n').trim();
-                                const html = mdHtmlBuf.join('\\n\\n').trim();
-                                if (text || html) {
-                                    messages.push({ entity: 'assistant', message: text, text, html, rowId });
-                                    console.log(`[CHAT_EXTRACT] Added assistant message: ${text.substring(0, 50)}...`);
-                                }
-                                mdTextBuf = [];
-                                mdHtmlBuf = [];
-                            };
-
-                            const parts = resp.querySelectorAll(SELECTORS.CHAT_PARTS);
-                            console.log(`[CHAT_EXTRACT] Found ${parts.length} parts in assistant row`);
-                            
-                            for (const el of parts) {
-                                if (el.classList.contains('rendered-markdown')) {
-                                    const t = (el.textContent || '').trim();
-                                    const h = el.innerHTML || '';
-                                    if (t) mdTextBuf.push(t);
-                                    if (h) mdHtmlBuf.push(h);
-                                } else if (el.classList.contains('chat-confirmation-widget')) {
-                                    flush();
-                                    const title = el.querySelector(SELECTORS.CONFIRMATION_TITLE);
-                                    const t = title && title.textContent ? title.textContent.trim() : '';
-                                    const h = title && title.innerHTML ? title.innerHTML : (el.innerHTML || '');
-                                    if (t || h) {
-                                        messages.push({ entity: 'confirmation', message: t, text: t, html: h, rowId });
-                                        console.log(`[CHAT_EXTRACT] Added confirmation: ${t.substring(0, 50)}...`);
-                                    }
-                                    confirmationFound = true;
-                                } else {
-                                    // tool invocation/result
-                                    flush();
-                                    const t = (el.textContent || '').trim();
-                                    const h = el.innerHTML || '';
-                                    if (t || h) {
-                                        messages.push({ entity: 'tool', message: t, text: t, html: h, rowId });
-                                        console.log(`[CHAT_EXTRACT] Added tool message: ${t.substring(0, 50)}...`);
-                                    }
-                                }
-                            }
-                            flush();
-                        } else {
-                            console.log(`[CHAT_EXTRACT] Unknown row: ${rowId}`);
-                        }
+                        });
+                        return { type: 'assistant', rowId, parts };
                     }
-                    
-                    console.log(`[CHAT_EXTRACT] Processed ${newRowsFound} new rows, total messages: ${messages.length}`);
-                    return newRowsFound;
-                };
+                    console.log(`Unknown row type for row ${row.outerHTML} rowId ${rowId}, skipping`);
+                    return { type: 'unknown', rowId };
+                });
+            }
+        """)
 
-                // Simple initialization: scroll to top first
-                const scrollToTop = async () => {
-                    console.log('[CHAT_EXTRACT] Scrolling to top...');
+    async def _scroll_to_top(self):
+        """Scroll chat to top"""
+        if not self.page:
+            raise RuntimeError('VS Code not launched. Call launch() first.')
+        await self.page.evaluate("""
+            () => {
+                const listContainer = document.querySelector('div.monaco-list[aria-label="Chat"]');
+                if (listContainer) {
                     listContainer.focus();
-                    await delay(FOCUS_SETTLE_DELAY_MS);
-                    const homeEvent = new KeyboardEvent('keydown', { ...KEY_EVENTS.HOME, bubbles: true, cancelable: true });
-                    listContainer.dispatchEvent(homeEvent);
-                };
-                
-                const sleepUntil = async (f, timeoutMs) => {{
-                    return new Promise((resolve, reject) => {{
-                        const timeWas = new Date();
-                        const wait = setInterval(() => {{
-                            if (f()) {{
-                                clearInterval(wait);
-                                resolve();
-                            }} else if (new Date() - timeWas > timeoutMs) {{
-                                clearInterval(wait);
-                                reject(new Error('Timeout waiting for condition'));
-                            }}
-                        }}, 20);
-                    }});
-                }};
+                    listContainer.dispatchEvent(new KeyboardEvent('keydown', {
+                        key: 'Home', code: 'Home', keyCode: 36, which: 36,
+                        bubbles: true, cancelable: true
+                    }));
+                }
+            }
+        """)
 
-                const processLoop = async () => {
-                    while (!isFinished) {
-                        try {
-                            // Extract current messages
-                            const newRowsFound = extractCurrentlyVisibleRows();
-                            
-                            // Save current focused element before scrolling
-                            const beforeFocus = session.querySelector('div.focused')?.getAttribute('data-index');
-                            console.log(`[CHAT_EXTRACT] before=${beforeFocus}`);
-                                        
-                            // Scroll down for next iteration
-                            listContainer.focus();
-                            console.log(`[CHAT_EXTRACT] Scrolling down`);
-                            const arrowEvent = new KeyboardEvent('keydown', { ...KEY_EVENTS.ARROW_DOWN, bubbles: true, cancelable: true });
-                            listContainer.dispatchEvent(arrowEvent);
-                            
-                            // Wait a short time for focus to update
-                            try {
-                                await sleepUntil(() => {
-                                    const afterFocus = session.querySelector('div.focused')?.getAttribute('data-index');
-                                    if (beforeFocus != afterFocus) {
-                                        console.log(`[CHAT_EXTRACT] Focus change detected; before=${beforeFocus} after=${afterFocus}`);
-                                    }
-                                    return beforeFocus !== afterFocus;
-                                }, FOCUS_SETTLE_DELAY_MS);
-                                console.log(`[CHAT_EXTRACT] Focus change detected`);
-                                // Fallthrough
-                            } catch (error) {
-                                console.log(`[CHAT_EXTRACT] Stopping: focus element did not change, attempts=${scrollAttempts}`);
-                                console.log(`[CHAT_EXTRACT] before/after=${beforeFocus}`);
-                                cleanupAll();
-                                const loading = !!document.querySelector(SELECTORS.LOADING_INDICATOR);
-                                return resolve({ messages, loading, confirmation: confirmationFound });
-                            }
-                            scrollAttempts++;
-                            // Wait for next iteration
-                            await delay(PROCESS_STEP_DELAY);
-                        } catch (error) {
-                            console.error('[CHAT_EXTRACT] Error in processLoop:', error);
-                            cleanupAll();
-                            reject(error);
-                            return;
-                        }
-                    }
-                };
+    async def _scroll_down_one(self):
+        """Scroll down one item, return True if focus changed"""
+        if not self.page:
+            raise RuntimeError('VS Code not launched. Call launch() first.')
+        self._dom_change_event.clear()
+        return await self.page.evaluate("""
+            () => {
+                const session = document.querySelector('div.interactive-session');
+                if (!session) return false;
                 
-                // Start: scroll to top, then begin loop
-                await scrollToTop();
-                console.log(`[CHAT_EXTRACT] scrolltop = ${listContainer.scrollTop} old = ${originalScrollTop}`);
-                await delay(PROCESS_STEP_DELAY);
-                await processLoop();
+                const beforeFocus = session.querySelector('div.focused')?.getAttribute('data-index');
+                const listContainer = document.querySelector('div.monaco-list[aria-label="Chat"]');
                 
-                // Safety timeout
-                safeSetTimeout(() => {
-                    console.log(`[CHAT_EXTRACT] Safety timeout reached after 60s`);
-                    cleanupAll();
-                    const loading = !!document.querySelector(SELECTORS.LOADING_INDICATOR);
-                    resolve({ messages, loading, confirmation: confirmationFound });
-                }, SAFETY_TIMEOUT); // Increased to 60s to accommodate 200 scroll attempts
-            });
-        })()
+                if (listContainer) {
+                    listContainer.focus();
+                    listContainer.dispatchEvent(new KeyboardEvent('keydown', {
+                        key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, which: 40,
+                        bubbles: true, cancelable: true
+                    }));
+                    
+                    // Wait briefly for focus to update
+                    return new Promise(resolve => {
+                        setTimeout(() => {
+                            const afterFocus = session.querySelector('div.focused')?.getAttribute('data-index');
+                            resolve(beforeFocus !== afterFocus);
+                        }, 200);
+                    });
+                }
+                return false;
+            }
+        """)
+
+    async def _initialize_chat_observer(self):
+        """Initialize the DOM mutation observer for chat changes (call once)"""
+        if not self.page:
+            raise RuntimeError('VS Code not launched. Call launch() first.')
+        
+        # Create an event to signal when DOM changes occur
+        self._dom_change_event = asyncio.Event()
+        
+        def notify_dom_change():
+            """Called from JavaScript when DOM changes are detected"""
+            if hasattr(self, '_dom_change_event'):
+                self._dom_change_event.set()
+        
+        await self.page.expose_function("_notify_chat_change", notify_dom_change)
+
+    async def _setup_chat_observer(self):
+        """Setup mutation observer for chat state changes"""
+        if not self.page:
+            raise RuntimeError('VS Code not launched. Call launch() first.')
+        
+        await self.page.evaluate("""
+            () => {
+                if (window._chatObserver) {
+                    window._chatObserver.disconnect();
+                }
+
+                const observer = new MutationObserver(() => {
+                    window._notify_chat_change();
+                });
+                
+                const session = document.querySelector('div.interactive-session');
+                if (session) {
+                    observer.observe(session, { childList: true, subtree: true, attributes: true });
+                    window._chatObserver = observer;
+                }
+            }
+        """)
+
+        self._dom_change_event.clear()
+
+    async def _check_chat_state(self):
+        """Check current chat loading/confirmation state"""
+        if not self.page:
+            raise RuntimeError('VS Code not launched. Call launch() first.')
+        return await self.page.evaluate("""
+            () => {
+                const loading = !!document.querySelector('div.chat-response-loading');
+                const confirmation = !!Array.from(document.querySelectorAll('div.chat-confirmation-widget a.monaco-button'))
+                    .filter(el => el.offsetParent !== null)
+                    .find(el => el.textContent.trim() === 'Continue');
+                return { loading, confirmation };
+            }
+        """)
+
+    async def _extract_chat_messages_helper(self):
+        """Simplified message extraction using Python logic with DOM observer"""
+        if not self.page:
+            raise RuntimeError('VS Code not launched. Call launch() first.')
+        
+        logger.debug("Starting simplified chat message extraction...")
+        
+        # Observer is already initialized, just set up the JavaScript side
+        await self._setup_chat_observer()
+        await self._scroll_to_top()
+        await asyncio.sleep(0.2)  # Let scroll settle
+        
+        seen_row_ids = set()
+        all_messages = []
+        max_attempts = 200
+        
+        for attempt in range(max_attempts):
+
+            # Wait for DOM changes or timeout
+            try:
+                # Clear any previous event state
+                self._dom_change_event.clear()
+                # Wait for DOM mutations with a reasonable timeout
+                await asyncio.wait_for(self._dom_change_event.wait(), timeout=0.1)
+                logger.debug("DOM change detected, continuing...")
+            except asyncio.TimeoutError:
+                logger.debug("No DOM changes detected within timeout, continuing anyway...")
+            
+            # Collect current visible data
+            row_data_list = await self._collect_visible_row_data()
+            new_rows_found = 0
+            
+            # Process each row with Python logic
+            for row_data in row_data_list:
+                if row_data['rowId'] in seen_row_ids:
+                    continue
+                    
+                seen_row_ids.add(row_data['rowId'])
+                new_rows_found += 1
+                
+                if row_data['type'] == 'user':
+                    message = self._parse_user_message(row_data)
+                    if message:
+                        all_messages.append(message)
+                        logger.debug(f"Added user message: {message['text'][:50]}...")
+                elif row_data['type'] == 'assistant':
+                    messages = self._parse_assistant_message(row_data)
+                    all_messages.extend(messages)
+                    for msg in messages:
+                        logger.debug(f"Added {msg['entity']} message: {msg['text'][:50]}...")
+            
+            logger.debug(f"Attempt {attempt + 1}: Found {new_rows_found} new rows, total messages: {len(all_messages)}")
+            
+            # Try to scroll down
+            self._dom_change_event.clear()
+            focus_changed = await self._scroll_down_one()
+            if not focus_changed:
+                logger.debug("No more content to scroll, extraction complete")
+                break
+            
+
+            await asyncio.sleep(0.05)  # Brief pause between scrolls
+
+
+
+        
+        # Check final state
+        state = await self._check_chat_state()
+        
+        # Clean up observer
+        await self._cleanup_chat_observer()
+        
+        return {
+            'messages': all_messages,
+            'loading': state['loading'],
+            'confirmation': state.get('confirmation', False)
+        }
+
+    async def _cleanup_chat_observer(self):
+        """Clean up the mutation observer"""
+        if not self.page:
+            return
+        
+        await self.page.evaluate("""
+            () => {
+                if (window._chatObserver) {
+                    window._chatObserver.disconnect();
+                    delete window._chatObserver;
+                }
+            }
         """)
 
     async def extract_all_chat_messages(self):
@@ -584,7 +582,7 @@ class AutoVSCodeCopilot:
                     });
                     observer.observe(document.body, { childList: true, subtree: true, attributes: true });
 
-                    // Safety timeout (30s) to avoid hanging forever
+                    // Safety timeout (60s) to avoid hanging forever
                     const timer = setTimeout(() => {
                         observer.disconnect();
                         resolve({ loading: false, confirmation: false, timeout: true });
@@ -614,9 +612,8 @@ class AutoVSCodeCopilot:
         result = await self._extract_chat_messages_helper()        
         messages = result.get('messages', [])
         logger.debug(f"Extracted {len(messages)} total messages")
-        logger.debug(f"Last msg: {messages[-1]['text']}")
-        #import pdb
-        #pdb.set_trace()
+        if messages:
+            logger.debug(f"Last msg: {messages[-1]['text']}")
         return messages
 
     async def pick_copilot_picker_helper(self, picker_aria_label, option_label=None):
