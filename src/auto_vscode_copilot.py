@@ -248,9 +248,7 @@ class AutoVSCodeCopilot:
         Returns True if chat is loading, False otherwise.
         """
         assert self.page is not None, "VS Code not launched. Call launch() first."
-        return await self.page.evaluate("""
-            !!document.querySelector('div.chat-response-loading')
-        """)
+        return (await self.page.locator('div.chat-response-loading').count()) > 0
 
     async def _extract_chat_messages_helper(self):
         if not self.page:
