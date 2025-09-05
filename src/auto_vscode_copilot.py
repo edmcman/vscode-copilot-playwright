@@ -369,7 +369,7 @@ class AutoVSCodeCopilot:
         """Scroll down one item, return True if focus changed"""
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
-        self._dom_change_event.clear()
+
         return await self.page.evaluate("""
             () => {
                 const session = document.querySelector('div.interactive-session');
@@ -460,6 +460,7 @@ class AutoVSCodeCopilot:
         
         # Observer is already initialized, just set up the JavaScript side
         await self._setup_chat_observer()
+        logger.debug("Scrolling to top of chat window...")
         await self._scroll_to_top()
         await asyncio.sleep(0.2)  # Let scroll settle
         
@@ -471,8 +472,6 @@ class AutoVSCodeCopilot:
 
             # Wait for DOM changes or timeout
             try:
-                # Clear any previous event state
-                self._dom_change_event.clear()
                 # Wait for DOM mutations with a reasonable timeout
                 await asyncio.wait_for(self._dom_change_event.wait(), timeout=0.1)
                 logger.debug("DOM change detected, continuing...")
@@ -506,6 +505,7 @@ class AutoVSCodeCopilot:
             
             # Try to scroll down
             self._dom_change_event.clear()
+            logger.debug("Scrolling down...")
             focus_changed = await self._scroll_down_one()
             if not focus_changed:
                 logger.debug("No more content to scroll, extraction complete")
