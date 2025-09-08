@@ -353,14 +353,17 @@ class AutoVSCodeCopilot:
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         await self.page.evaluate("""
-            () => {
+            async () => {
                 const listContainer = document.querySelector('div.monaco-list[aria-label="Chat"]');
                 if (listContainer) {
                     listContainer.focus();
+                    await new Promise(resolve => setTimeout(resolve, 100));
                     listContainer.dispatchEvent(new KeyboardEvent('keydown', {
                         key: 'Home', code: 'Home', keyCode: 36, which: 36,
                         bubbles: true, cancelable: true
                     }));
+                } else {
+                    console.log('No chat list container found for scrolling to top');
                 }
             }
         """)
@@ -462,8 +465,8 @@ class AutoVSCodeCopilot:
         await self._setup_chat_observer()
         logger.debug("Scrolling to top of chat window...")
         await self._scroll_to_top()
-        await asyncio.sleep(0.2)  # Let scroll settle
-        
+        await asyncio.sleep(0.1)  # Let scroll settle
+
         seen_row_ids = set()
         all_messages = []
         max_attempts = 200
