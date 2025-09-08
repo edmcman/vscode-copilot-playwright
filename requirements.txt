@@ -2,3 +2,4 @@ playwright>=1.40.0
 pytest
 pytest-asyncio
 requests
+tenacity

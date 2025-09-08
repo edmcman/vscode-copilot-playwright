@@ -5,7 +5,8 @@ import time
 from pathlib import Path
 import subprocess
 import logging
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError, Error as PlaywrightError
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,6 +33,20 @@ class AutoVSCodeCopilot:
             "Direct instantiation is not supported. "
             "Use 'await AutoVSCodeCopilot.create(...)' instead."
         )
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=0.5, min=0.5, max=2.0),
+        retry=retry_if_exception_type(PlaywrightError),
+        before_sleep=lambda retry_state: logger.warning(
+            f"Execution context destroyed (attempt {retry_state.attempt_number}/3), retrying..."
+        )
+    )
+    async def _evaluate_with_retry(self, script: str, **kwargs):
+        """Helper to evaluate JavaScript with retry on execution context errors."""
+        if not self.page:
+            raise RuntimeError('VS Code not launched. Call launch() first.')
+        return await self.page.evaluate(script, **kwargs)
 
     @classmethod
     async def create(cls, workspace_path=None):
@@ -72,7 +87,6 @@ class AutoVSCodeCopilot:
         """Initialize the async Playwright connection. Call this after creating the instance."""
         await self._connect_to_vscode()
         await self._show_copilot_chat_helper()
-        await self._initialize_chat_observer()
         logger.info("VS Code loaded successfully!")
 
     def _launch_vscode(self, workspace_path=None):
@@ -295,9 +309,7 @@ class AutoVSCodeCopilot:
 
     async def _collect_visible_row_data(self):
         """Collect raw DOM data from visible rows"""
-        if not self.page:
-            raise RuntimeError('VS Code not launched. Call launch() first.')
-        return await self.page.evaluate("""
+        return await self._evaluate_with_retry("""
             () => {
                 const SELECTORS = {
                     INTERACTIVE_SESSION: 'div.interactive-session > div.interactive-list',
@@ -352,9 +364,7 @@ class AutoVSCodeCopilot:
 
     async def _scroll_to_top(self):
         """Scroll chat to top"""
-        if not self.page:
-            raise RuntimeError('VS Code not launched. Call launch() first.')
-        await self.page.evaluate("""
+        await self._evaluate_with_retry("""
             async () => {
                 const listContainer = document.querySelector('div.monaco-list[aria-label="Chat"]');
                 if (listContainer) {
@@ -372,10 +382,7 @@ class AutoVSCodeCopilot:
 
     async def _scroll_down_one(self):
         """Scroll down one item, return True if focus changed"""
-        if not self.page:
-            raise RuntimeError('VS Code not launched. Call launch() first.')
-
-        return await self.page.evaluate("""
+        return await self._evaluate_with_retry("""
             () => {
                 const session = document.querySelector('div.interactive-session');
                 if (!session) return false;
@@ -402,51 +409,9 @@ class AutoVSCodeCopilot:
             }
         """)
 
-    async def _initialize_chat_observer(self):
-        """Initialize the DOM mutation observer for chat changes (call once)"""
-        if not self.page:
-            raise RuntimeError('VS Code not launched. Call launch() first.')
-        
-        # Create an event to signal when DOM changes occur
-        self._dom_change_event = asyncio.Event()
-        
-        def notify_dom_change():
-            """Called from JavaScript when DOM changes are detected"""
-            if hasattr(self, '_dom_change_event'):
-                self._dom_change_event.set()
-        
-        await self.page.expose_function("_notify_chat_change", notify_dom_change)
-
-    async def _setup_chat_observer(self):
-        """Setup mutation observer for chat state changes"""
-        if not self.page:
-            raise RuntimeError('VS Code not launched. Call launch() first.')
-        
-        await self.page.evaluate("""
-            () => {
-                if (window._chatObserver) {
-                    window._chatObserver.disconnect();
-                }
-
-                const observer = new MutationObserver(() => {
-                    window._notify_chat_change();
-                });
-                
-                const session = document.querySelector('div.interactive-session div.monaco-list[aria-label="Chat"]');
-                if (session) {
-                    observer.observe(session, { childList: true, subtree: true, attributes: true });
-                    window._chatObserver = observer;
-                }
-            }
-        """)
-
-        self._dom_change_event.clear()
-
     async def _check_chat_state(self):
         """Check current chat loading/confirmation state"""
-        if not self.page:
-            raise RuntimeError('VS Code not launched. Call launch() first.')
-        return await self.page.evaluate("""
+        return await self._evaluate_with_retry("""
             () => {
                 const loading = !!document.querySelector('div.chat-response-loading');
                 const confirmation = !!Array.from(document.querySelectorAll('div.chat-confirmation-widget a.monaco-button'))
@@ -457,96 +422,69 @@ class AutoVSCodeCopilot:
         """)
 
     async def _extract_chat_messages_helper(self):
-        """Simplified message extraction using Python logic with DOM observer"""
+        """Simplified message extraction using Python logic with targeted row ID waits."""
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         
         logger.debug("Starting simplified chat message extraction...")
         
-        # Observer is already initialized, just set up the JavaScript side
-        await self._setup_chat_observer()
         logger.debug("Scrolling to top of chat window...")
         await self._scroll_to_top()
-        await asyncio.sleep(0.1)  # Let scroll settle
 
         seen_row_ids = set()
         all_messages = []
         max_attempts = 200
-        
-        for attempt in range(max_attempts):
+        current_expected_id = 0
 
-            # Wait for DOM changes or timeout
+        for attempt in range(max_attempts):
+            # Wait for the expected row ID selector to be available using Playwright
+            row_selector = f'div.interactive-list div.monaco-list[aria-label="Chat"] div.monaco-list-row[data-index="{current_expected_id}"]'
             try:
-                # Wait for DOM mutations with a reasonable timeout
-                await asyncio.wait_for(self._dom_change_event.wait(), timeout=0.1)
-                logger.debug("DOM change detected, continuing...")
-            except asyncio.TimeoutError:
-                logger.debug("No DOM changes detected within timeout, continuing anyway...")
+                await self.page.wait_for_selector(row_selector, timeout=5000)  # 5s timeout for availability
+                logger.debug(f"Row ID {current_expected_id} is now available.")
+            except PlaywrightTimeoutError:
+                logger.debug(f"Row ID {current_expected_id} not found within timeout, stopping.")
+                break
             
-            # Collect current visible data
+            # Collect visible row data and process up to the expected ID
             row_data_list = await self._collect_visible_row_data()
-            new_rows_found = 0
+            expected_row = next((row for row in row_data_list if int(row['rowId']) == current_expected_id), None)
+            if expected_row:
+                row_id = int(expected_row['rowId'])
+                if row_id == current_expected_id:
+                    seen_row_ids.add(row_id)
+
+                    if expected_row['type'] == 'user':
+                        message = self._parse_user_message(expected_row)
+                        if message:
+                            all_messages.append(message)
+                            logger.debug(f"Added user message: {message['text'][:50]}...")
+                    elif expected_row['type'] == 'assistant':
+                        messages = self._parse_assistant_message(expected_row)
+                        all_messages.extend(messages)
+                        for msg in messages:
+                            logger.debug(f"Added {msg['entity']} message: {msg['text'][:50]}...")
             
-            # Process each row with Python logic
-            for row_data in row_data_list:
-                if row_data['rowId'] in seen_row_ids:
-                    continue
-                    
-                seen_row_ids.add(row_data['rowId'])
-                new_rows_found += 1
-                
-                if row_data['type'] == 'user':
-                    message = self._parse_user_message(row_data)
-                    if message:
-                        all_messages.append(message)
-                        logger.debug(f"Added user message: {message['text'][:50]}...")
-                elif row_data['type'] == 'assistant':
-                    messages = self._parse_assistant_message(row_data)
-                    all_messages.extend(messages)
-                    for msg in messages:
-                        logger.debug(f"Added {msg['entity']} message: {msg['text'][:50]}...")
+                    logger.debug(f"Attempt {attempt + 1}: Processed up to row {current_expected_id}, total messages: {len(all_messages)}")
+            else:
+                logger.warning(f"Expected row ID {current_expected_id} not found in collected data.")
             
-            logger.debug(f"Attempt {attempt + 1}: Found {new_rows_found} new rows, total messages: {len(all_messages)}")
-            
-            # Try to scroll down
-            self._dom_change_event.clear()
+            # Increment expected ID and try to scroll down
+            current_expected_id += 1
             logger.debug("Scrolling down...")
             focus_changed = await self._scroll_down_one()
             if not focus_changed:
                 logger.debug("No more content to scroll, extraction complete")
                 break
-            
-
-            await asyncio.sleep(0.05)  # Brief pause between scrolls
-
-
-
         
         # Check final state
         state = await self._check_chat_state()
-        
-        # Clean up observer
-        await self._cleanup_chat_observer()
         
         return {
             'messages': all_messages,
             'loading': state['loading'],
             'confirmation': state.get('confirmation', False)
         }
-
-    async def _cleanup_chat_observer(self):
-        """Clean up the mutation observer"""
-        if not self.page:
-            return
-        
-        await self.page.evaluate("""
-            () => {
-                if (window._chatObserver) {
-                    window._chatObserver.disconnect();
-                    delete window._chatObserver;
-                }
-            }
-        """)
 
     async def extract_all_chat_messages(self):
         """
@@ -562,7 +500,7 @@ class AutoVSCodeCopilot:
             iteration += 1
             logger.debug(f"extract_all_chat_messages iteration {iteration}: checking chat state...")
             
-            state = await self.page.evaluate("""
+            state = await self._evaluate_with_retry("""
                 () => new Promise((resolve) => {
                     const check = () => {
                         const loading = !!document.querySelector('div.chat-response-loading');
@@ -619,6 +557,7 @@ class AutoVSCodeCopilot:
         logger.debug(f"Extracted {len(messages)} total messages")
         if messages:
             logger.debug(f"Last msg: {messages[-1]['text']}")
+
         return messages
 
     async def pick_copilot_picker_helper(self, picker_aria_label, option_label=None):
