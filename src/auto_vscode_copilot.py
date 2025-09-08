@@ -300,8 +300,8 @@ class AutoVSCodeCopilot:
         return await self.page.evaluate("""
             () => {
                 const SELECTORS = {
-                    INTERACTIVE_SESSION: 'div.interactive-session',
-                    MONACO_LIST_ROWS: 'div.monaco-list-rows > div.monaco-list-row',
+                    INTERACTIVE_SESSION: 'div.interactive-session > div.interactive-list',
+                    MONACO_LIST_ROWS: 'div.monaco-list[aria-label="Chat"] div.monaco-list-rows > div.monaco-list-row',
                     USER_REQUEST: '.interactive-request > .value',
                     ASSISTANT_RESPONSE: '.interactive-response > .value',
                     RENDERED_MARKDOWN: ':scope > .rendered-markdown',
@@ -323,6 +323,8 @@ class AutoVSCodeCopilot:
                     const user = row.querySelector(SELECTORS.USER_REQUEST);
                     const resp = row.querySelector(SELECTORS.ASSISTANT_RESPONSE);
 
+                    console.log(`Debug: Processing row ID ${rowId}, user: ${!!user}, resp: ${!!resp}`);
+
                     if (user) {
                         const rendered_markdown = Array.from(user.querySelectorAll(SELECTORS.RENDERED_MARKDOWN)).map(el => ({
                             text: el.textContent || '',
@@ -342,7 +344,7 @@ class AutoVSCodeCopilot:
                         });
                         return { type: 'assistant', rowId, parts };
                     }
-                    console.log(`Unknown row type for row ${row.outerHTML} rowId ${rowId}, skipping`);
+                    console.log(`Unknown row type for row ID ${rowId} ${row.outerHTML}, skipping`);
                     return { type: 'unknown', rowId };
                 });
             }
@@ -430,7 +432,7 @@ class AutoVSCodeCopilot:
                     window._notify_chat_change();
                 });
                 
-                const session = document.querySelector('div.interactive-session');
+                const session = document.querySelector('div.interactive-session div.monaco-list[aria-label="Chat"]');
                 if (session) {
                     observer.observe(session, { childList: true, subtree: true, attributes: true });
                     window._chatObserver = observer;
