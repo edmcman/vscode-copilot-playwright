@@ -100,7 +100,8 @@ class AutoVSCodeCopilot:
             "--disable-web-security",
         ]
         if workspace_path:
-            vscode_args.insert(0, workspace_path)
+            vscode_args.append('--folder-uri')
+            vscode_args.append(workspace_path)
             logger.debug(f"Opening workspace: {workspace_path}")
         vscode_executable = "code"
         logger.debug(f"Executing VS Code: {vscode_executable} {' '.join(vscode_args)}")
