@@ -401,6 +401,7 @@ class AutoVSCodeCopilot:
                     return new Promise(resolve => {
                         setTimeout(() => {
                             const afterFocus = session.querySelector('div.focused')?.getAttribute('data-index');
+                            console.log(`Scrolled down from ${beforeFocus} to ${afterFocus}`);
                             resolve(beforeFocus !== afterFocus);
                         }, 200);
                     });
@@ -443,8 +444,17 @@ class AutoVSCodeCopilot:
                 await self.page.wait_for_selector(row_selector, timeout=5000)  # 5s timeout for availability
                 logger.debug(f"Row ID {current_expected_id} is now available.")
             except PlaywrightTimeoutError:
-                logger.debug(f"Row ID {current_expected_id} not found within timeout, stopping.")
-                break
+                logger.debug(f"Row ID {current_expected_id} not found within timeout, attempting refocus.")
+                # Try sending ArrowDown then ArrowUp to force refocus
+                await self.page.keyboard.press('ArrowDown')
+                await self.page.keyboard.press('ArrowUp')
+                # Try again for the same row ID
+                try:
+                    await self.page.wait_for_selector(row_selector, timeout=2000)
+                    logger.debug(f"Row ID {current_expected_id} refocused and available.")
+                except PlaywrightTimeoutError:
+                    logger.warning(f"Row ID {current_expected_id} still not found after refocus, stopping.")
+                    break
             
             # Collect visible row data and process up to the expected ID
             row_data_list = await self._collect_visible_row_data()
