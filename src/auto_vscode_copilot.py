@@ -15,6 +15,67 @@ logging.basicConfig(
 )
 logger = logging.getLogger("AutoVSCodeCopilot")
 
+# Constants
+class Constants:
+    # Ports
+    PORT_START = 9222
+    PORT_MAX = 9300
+
+    # Timeouts (in milliseconds)
+    TIMEOUT_VSCODE_START_ITERATIONS = 30
+    TIMEOUT_VSCODE_START_SLEEP = 1  # seconds
+    TIMEOUT_WORKBENCH = 30000
+    TIMEOUT_CHAT_LOCATOR = 5000
+    TIMEOUT_INPUT_LOCATOR = 1000
+    TIMEOUT_SEND_BUTTON = 1000
+    TIMEOUT_TRUST_LOCATOR = 1000
+    TIMEOUT_SEND_BUTTON_HIDDEN = 1000
+    TIMEOUT_SEND_BUTTON_VISIBLE = 60000
+    TIMEOUT_ROW_SELECTOR = 5000
+    TIMEOUT_REFOCUS = 2000
+    TIMEOUT_PICKER_LOCATOR = 60000
+    TIMEOUT_CONTEXT_LOCATOR = 10000
+    TIMEOUT_OPTION_LOCATOR_VISIBLE = 100
+    TIMEOUT_OPTION_CLICK = 1000
+    TIMEOUT_SAFETY = 60000
+    TIMEOUT_SCROLL = 100
+    TIMEOUT_SCROLL_DOWN = 200
+
+    # Other constants
+    MAX_ATTEMPTS_EXTRACTION = 200
+    TYPING_DELAY = 10
+    TERMINATE_TIMEOUT = 2  # seconds
+
+    # Selectors
+    SELECTOR_WORKBENCH = '.monaco-workbench'
+    SELECTOR_CHAT_INPUT_CONTAINER = 'div.chat-input-container'
+    SELECTOR_SEND_BUTTON = 'a.action-label.codicon.codicon-send'
+    SELECTOR_INTERACTIVE_SESSION = 'div.interactive-session'
+    SELECTOR_CHAT_RESPONSE_LOADING = 'div.chat-response-loading'
+    SELECTOR_TRUST_BUTTON_ROLE = ("button", "Trust", True)  # role, name, exact
+    SELECTOR_CONTINUE_BUTTON = 'div.chat-confirmation-widget a.monaco-button'
+    CONTINUE_BUTTON_TEXT = "Continue"
+
+    # JavaScript selectors (for evaluation)
+    JS_SELECTORS = {
+        'INTERACTIVE_SESSION': 'div.interactive-session > div.interactive-list',
+        'MONACO_LIST_ROWS': 'div.monaco-list[aria-label="Chat"] div.monaco-list-rows > div.monaco-list-row',
+        'USER_REQUEST': '.interactive-request > .value',
+        'ASSISTANT_RESPONSE': '.interactive-response > .value',
+        'RENDERED_MARKDOWN': ':scope > .rendered-markdown',
+        'CHAT_PARTS': ':scope > .rendered-markdown, :scope > .chat-tool-invocation-part, :scope > .chat-tool-result-part, :scope > .chat-confirmation-widget',
+        'CONFIRMATION_TITLE': '.chat-confirmation-widget-title .rendered-markdown'
+    }
+
+    # Paths
+    USER_DATA_DIR_REL = ".vscode-playwright-data"
+
+    # Retry settings
+    RETRY_STOP_ATTEMPTS = 3
+    RETRY_WAIT_MULTIPLIER = 0.5
+    RETRY_WAIT_MIN = 0.5
+    RETRY_WAIT_MAX = 2.0
+
 def _is_port_in_use(port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         return s.connect_ex(('localhost', port)) == 0
@@ -35,8 +96,8 @@ class AutoVSCodeCopilot:
         )
 
     @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=0.5, min=0.5, max=2.0),
+        stop=stop_after_attempt(Constants.RETRY_STOP_ATTEMPTS),
+        wait=wait_exponential(multiplier=Constants.RETRY_WAIT_MULTIPLIER, min=Constants.RETRY_WAIT_MIN, max=Constants.RETRY_WAIT_MAX),
         retry=retry_if_exception_type(PlaywrightError),
         before_sleep=lambda retry_state: logger.warning(
             f"Execution context destroyed (attempt {retry_state.attempt_number}/3), retrying..."
@@ -56,11 +117,11 @@ class AutoVSCodeCopilot:
         self.context = None
         self.page = None
         self.vscode_process = None
-        self.user_data_dir = Path(__file__).parent.parent / ".vscode-playwright-data"
+        self.user_data_dir = Path(__file__).parent.parent / Constants.USER_DATA_DIR_REL
         self.playwright = None
-        # Try ports from 9222 up to 9300, check with socket before launching
-        port = 9222
-        max_port = 9300
+        # Try ports from Constants.PORT_START up to Constants.PORT_MAX, check with socket before launching
+        port = Constants.PORT_START
+        max_port = Constants.PORT_MAX
         while port <= max_port:
             if _is_port_in_use(port):
                 logger.info(f"Port {port} is already in use, trying next...")
@@ -79,7 +140,7 @@ class AutoVSCodeCopilot:
                     self.vscode_process.terminate()
                 raise RuntimeError(f"Port {port} is in use or VS Code failed to start: {e}")
         else:
-            raise RuntimeError(f"No available port found for VS Code remote debugging between 9222 and {max_port}.")
+            raise RuntimeError(f"No available port found for VS Code remote debugging between {Constants.PORT_START} and {max_port}.")
         await self.initialize()
         return self
 
@@ -109,7 +170,7 @@ class AutoVSCodeCopilot:
 
     def _wait_for_vscode_to_start(self):
         logger.debug("Waiting for VS Code to start...")
-        for _ in range(30):
+        for _ in range(Constants.TIMEOUT_VSCODE_START_ITERATIONS):
             try:
                 response = requests.get(f"http://localhost:{self.vscode_port}/json/version")
                 if response.ok:
@@ -117,7 +178,7 @@ class AutoVSCodeCopilot:
                     return
             except Exception:
                 pass
-            time.sleep(1)
+            time.sleep(Constants.TIMEOUT_VSCODE_START_SLEEP)
         logger.warning(f"VS Code failed to start.\nstdout:{self.vscode_process.stdout.read().decode()}\nstderr:{self.vscode_process.stderr.read().decode()}")
         raise RuntimeError(f"VS Code failed to start or debugging port {self.vscode_port} is not accessible.")
 
@@ -139,9 +200,9 @@ class AutoVSCodeCopilot:
                 logger.debug(f"[Browser Console][{msg.type}] {msg.text}")
             self.page.on("console", handle_console_msg)
         try:
-            await self.page.wait_for_selector('.monaco-workbench', timeout=30000)
+            await self.page.wait_for_selector(Constants.SELECTOR_WORKBENCH, timeout=Constants.TIMEOUT_WORKBENCH)
         except PlaywrightTimeoutError:
-            raise RuntimeError("Failed to find VS Code workbench: Selector '.monaco-workbench' not found. This indicates VS Code did not load properly.")
+            raise RuntimeError(f"Failed to find VS Code workbench: Selector '{Constants.SELECTOR_WORKBENCH}' not found. This indicates VS Code did not load properly.")
 
     async def dump_dom(self):
         if not self.page:
@@ -167,44 +228,44 @@ class AutoVSCodeCopilot:
         logger.debug('Opening Copilot chat window using keyboard shortcut...')
         try:
             await self.page.keyboard.press('Control+Alt+i')
-            chat_locator = self.page.locator('div.interactive-session')
+            chat_locator = self.page.locator(Constants.SELECTOR_INTERACTIVE_SESSION)
             logger.debug('Verifying Copilot chat window presence...')
-            await chat_locator.wait_for(state='visible', timeout=5000)
+            await chat_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_CHAT_LOCATOR)
             logger.info('✅ Copilot chat window successfully opened and verified!')
             return True
         except PlaywrightTimeoutError:
-            raise RuntimeError("Failed to open Copilot chat: Selector 'div.interactive-session' not found. This might indicate Copilot is not available or the interface has changed.")
+            raise RuntimeError(f"Failed to open Copilot chat: Selector '{Constants.SELECTOR_INTERACTIVE_SESSION}' not found. This might indicate Copilot is not available or the interface has changed.")
 
     async def _write_chat_message_helper(self, message):
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         logger.debug(f'Writing chat message: "{message}"')
 
-        input_selector = 'div.chat-input-container'
+        input_selector = Constants.SELECTOR_CHAT_INPUT_CONTAINER
         input_locator = self.page.locator(input_selector)
-        await input_locator.wait_for(state='visible', timeout=1000)
+        await input_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_INPUT_LOCATOR)
         logger.debug(f"Focusing on {input_locator}")
         await input_locator.click()
         for c in message:
             if c == '\n':
                 await self.page.keyboard.press('Shift+Enter')
             else:
-                await input_locator.type(c, delay=10)
+                await input_locator.type(c, delay=Constants.TYPING_DELAY)
 
     async def _send_chat_message_helper(self):
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         logger.debug('Sending chat message...')
-        send_button_locator = self.page.locator('a.action-label.codicon.codicon-send')
-        await send_button_locator.wait_for(state='visible', timeout=1000)
+        send_button_locator = self.page.locator(Constants.SELECTOR_SEND_BUTTON)
+        await send_button_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_SEND_BUTTON)
         logger.debug('Clicking send button using Locator...')
         await send_button_locator.click()
 
         # Sometimes VS Code will pop-up a trust/security dialog for MCP servers.
         # We need to handle this case by waiting for the dialog to appear
-        trust_locator = self.page.get_by_role("button", name="Trust", exact=True)
-        trust_locator_visible = asyncio.create_task(trust_locator.wait_for(state='visible', timeout=1000))
-        send_button_disappears = asyncio.create_task(send_button_locator.wait_for(state='hidden', timeout=1000))
+        trust_locator = self.page.get_by_role(role=Constants.SELECTOR_TRUST_BUTTON_ROLE[0], name=Constants.SELECTOR_TRUST_BUTTON_ROLE[1], exact=Constants.SELECTOR_TRUST_BUTTON_ROLE[2])
+        trust_locator_visible = asyncio.create_task(trust_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_TRUST_LOCATOR))
+        send_button_disappears = asyncio.create_task(send_button_locator.wait_for(state='hidden', timeout=Constants.TIMEOUT_SEND_BUTTON_HIDDEN))
 
         done, pending = await asyncio.wait([trust_locator_visible, send_button_disappears], return_when=asyncio.FIRST_COMPLETED)
         for p in pending: p.cancel()
@@ -214,9 +275,9 @@ class AutoVSCodeCopilot:
             await trust_locator.click()
 
         # Await the send button disappearing
-        await send_button_locator.wait_for(state='hidden', timeout=1000)
+        await send_button_locator.wait_for(state='hidden', timeout=Constants.TIMEOUT_SEND_BUTTON_HIDDEN)
         # And reappearing
-        await send_button_locator.wait_for(state='visible', timeout=60000)
+        await send_button_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_SEND_BUTTON_VISIBLE)
         logger.debug('✅ Chat message sent successfully!')
 
     async def send_chat_message(self, message, model_label='GPT-4.1', mode_label='Agent'):
@@ -251,7 +312,7 @@ class AutoVSCodeCopilot:
             logger.debug('Closing VS Code process...')
             self.vscode_process.terminate()
             try:
-                self.vscode_process.wait(timeout=2)
+                self.vscode_process.wait(timeout=Constants.TERMINATE_TIMEOUT)
             except subprocess.TimeoutExpired:
                 logger.warning('VS Code process did not exit after SIGTERM, sending SIGKILL...')
                 self.vscode_process.kill()
@@ -264,7 +325,7 @@ class AutoVSCodeCopilot:
         Returns True if chat is loading, False otherwise.
         """
         assert self.page is not None, "VS Code not launched. Call launch() first."
-        return (await self.page.locator('div.chat-response-loading').count()) > 0
+        return (await self.page.locator(Constants.SELECTOR_CHAT_RESPONSE_LOADING).count()) > 0
 
     def _parse_user_message(self, element_data):
         """Parse user message from DOM element data"""
@@ -310,118 +371,114 @@ class AutoVSCodeCopilot:
 
     async def _collect_visible_row_data(self):
         """Collect raw DOM data from visible rows"""
-        return await self._evaluate_with_retry("""
-            () => {
-                const SELECTORS = {
-                    INTERACTIVE_SESSION: 'div.interactive-session > div.interactive-list',
-                    MONACO_LIST_ROWS: 'div.monaco-list[aria-label="Chat"] div.monaco-list-rows > div.monaco-list-row',
-                    USER_REQUEST: '.interactive-request > .value',
-                    ASSISTANT_RESPONSE: '.interactive-response > .value',
-                    RENDERED_MARKDOWN: ':scope > .rendered-markdown',
-                    CHAT_PARTS: ':scope > .rendered-markdown, :scope > .chat-tool-invocation-part, :scope > .chat-tool-result-part, :scope > .chat-confirmation-widget',
-                    CONFIRMATION_TITLE: '.chat-confirmation-widget-title .rendered-markdown'
-                };
+        script = f"""
+            () => {{
+                const SELECTORS = {Constants.JS_SELECTORS};
 
                 // Find the chat session first, just like the old code
                 const session = document.querySelector(SELECTORS.INTERACTIVE_SESSION);
-                if (!session) {
+                if (!session) {{
                     console.log('No interactive session found');
                     return [];
-                }
+                }}
 
                 // Only look for Monaco list rows within the chat session
                 const rows = Array.from(session.querySelectorAll(SELECTORS.MONACO_LIST_ROWS));
-                return rows.map(row => {
+                return rows.map(row => {{
                     const rowId = row.getAttribute('data-index');
                     const user = row.querySelector(SELECTORS.USER_REQUEST);
                     const resp = row.querySelector(SELECTORS.ASSISTANT_RESPONSE);
 
-                    console.log(`Debug: Processing row ID ${rowId}, user: ${!!user}, resp: ${!!resp}`);
+                    console.log(`Debug: Processing row ID ${{rowId}}, user: ${{!!user}}, resp: ${{!!resp}}`);
 
-                    if (user) {
-                        const rendered_markdown = Array.from(user.querySelectorAll(SELECTORS.RENDERED_MARKDOWN)).map(el => ({
+                    if (user) {{
+                        const rendered_markdown = Array.from(user.querySelectorAll(SELECTORS.RENDERED_MARKDOWN)).map(el => ({{
                             text: el.textContent || '',
                             html: el.innerHTML || ''
-                        }));
-                        return { type: 'user', rowId, rendered_markdown };
-                    } else if (resp) {
-                        const parts = Array.from(resp.querySelectorAll(SELECTORS.CHAT_PARTS)).map(el => {
-                            if (el.classList.contains('rendered-markdown')) {
-                                return { type: 'rendered-markdown', text: el.textContent || '', html: el.innerHTML || '' };
-                            } else if (el.classList.contains('chat-confirmation-widget')) {
+                        }}));
+                        return {{ type: 'user', rowId, rendered_markdown }};
+                    }} else if (resp) {{
+                        const parts = Array.from(resp.querySelectorAll(SELECTORS.CHAT_PARTS)).map(el => {{
+                            if (el.classList.contains('rendered-markdown')) {{
+                                return {{ type: 'rendered-markdown', text: el.textContent || '', html: el.innerHTML || '' }};
+                            }} else if (el.classList.contains('chat-confirmation-widget')) {{
                                 const title = el.querySelector(SELECTORS.CONFIRMATION_TITLE);
-                                return { type: 'confirmation', text: title?.textContent || '', html: title?.innerHTML || el.innerHTML || '' };
-                            } else {
-                                return { type: 'tool', text: el.textContent || '', html: el.innerHTML || '' };
-                            }
-                        });
-                        return { type: 'assistant', rowId, parts };
-                    }
-                    console.log(`Unknown row type for row ID ${rowId} ${row.outerHTML}, skipping`);
-                    return { type: 'unknown', rowId };
-                });
-            }
-        """)
+                                return {{ type: 'confirmation', text: title?.textContent || '', html: title?.innerHTML || el.innerHTML || '' }};
+                            }} else {{
+                                return {{ type: 'tool', text: el.textContent || '', html: el.innerHTML || '' }};
+                            }}
+                        }});
+                        return {{ type: 'assistant', rowId, parts }};
+                    }}
+                    console.log(`Unknown row type for row ID ${{rowId}} ${{row.outerHTML}}, skipping`);
+                    return {{ type: 'unknown', rowId }};
+                }});
+            }}
+        """
+        return await self._evaluate_with_retry(script)
 
     async def _scroll_to_top(self):
         """Scroll chat to top"""
-        await self._evaluate_with_retry("""
-            async () => {
+        script = f"""
+            async () => {{
                 const listContainer = document.querySelector('div.monaco-list[aria-label="Chat"]');
-                if (listContainer) {
+                if (listContainer) {{
                     listContainer.focus();
-                    await new Promise(resolve => setTimeout(resolve, 100));
-                    listContainer.dispatchEvent(new KeyboardEvent('keydown', {
+                    await new Promise(resolve => setTimeout(resolve, {Constants.TIMEOUT_SCROLL}));
+                    listContainer.dispatchEvent(new KeyboardEvent('keydown', {{
                         key: 'Home', code: 'Home', keyCode: 36, which: 36,
                         bubbles: true, cancelable: true
-                    }));
-                } else {
+                    }}));
+                }} else {{
                     console.log('No chat list container found for scrolling to top');
-                }
-            }
-        """)
+                }}
+            }}
+        """
+        await self._evaluate_with_retry(script)
 
     async def _scroll_down_one(self):
         """Scroll down one item, return True if focus changed"""
-        return await self._evaluate_with_retry("""
-            () => {
-                const session = document.querySelector('div.interactive-session');
+        script = f"""
+            () => {{
+                const session = document.querySelector('{Constants.SELECTOR_INTERACTIVE_SESSION}');
                 if (!session) return false;
                 
                 const beforeFocus = session.querySelector('div.focused')?.getAttribute('data-index');
                 const listContainer = document.querySelector('div.monaco-list[aria-label="Chat"]');
                 
-                if (listContainer) {
+                if (listContainer) {{
                     listContainer.focus();
-                    listContainer.dispatchEvent(new KeyboardEvent('keydown', {
+                    listContainer.dispatchEvent(new KeyboardEvent('keydown', {{
                         key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, which: 40,
                         bubbles: true, cancelable: true
-                    }));
+                    }}));
                     
                     // Wait briefly for focus to update
-                    return new Promise(resolve => {
-                        setTimeout(() => {
+                    return new Promise(resolve => {{
+                        setTimeout(() => {{
                             const afterFocus = session.querySelector('div.focused')?.getAttribute('data-index');
-                            console.log(`Scrolled down from ${beforeFocus} to ${afterFocus}`);
+                            console.log(`Scrolled down from ${{beforeFocus}} to ${{afterFocus}}`);
                             resolve(beforeFocus !== afterFocus);
-                        }, 200);
-                    });
-                }
+                        }}, {Constants.TIMEOUT_SCROLL_DOWN});
+                    }});
+                }}
                 return false;
-            }
-        """)
+            }}
+        """
+        return await self._evaluate_with_retry(script)
 
     async def _check_chat_state(self):
         """Check current chat loading/confirmation state"""
-        return await self._evaluate_with_retry("""
-            () => {
-                const loading = !!document.querySelector('div.chat-response-loading');
-                const confirmation = !!Array.from(document.querySelectorAll('div.chat-confirmation-widget a.monaco-button'))
+        script = f"""
+            () => {{
+                const loading = !!document.querySelector('{Constants.SELECTOR_CHAT_RESPONSE_LOADING}');
+                const confirmation = !!Array.from(document.querySelectorAll('{Constants.SELECTOR_CONTINUE_BUTTON}'))
                     .filter(el => el.offsetParent !== null)
-                    .find(el => el.textContent.trim() === 'Continue');
-                return { loading, confirmation };
-            }
-        """)
+                    .find(el => el.textContent.trim() === '{Constants.CONTINUE_BUTTON_TEXT}');
+                return {{ loading, confirmation }};
+            }}
+        """
+        return await self._evaluate_with_retry(script)
 
     async def _extract_chat_messages_helper(self):
         """Simplified message extraction using Python logic with targeted row ID waits."""
@@ -435,14 +492,14 @@ class AutoVSCodeCopilot:
 
         seen_row_ids = set()
         all_messages = []
-        max_attempts = 200
+        max_attempts = Constants.MAX_ATTEMPTS_EXTRACTION
         current_expected_id = 0
 
         for attempt in range(max_attempts):
             # Wait for the expected row ID selector to be available using Playwright
             row_selector = f'div.interactive-list div.monaco-list[aria-label="Chat"] div.monaco-list-row[data-index="{current_expected_id}"]'
             try:
-                await self.page.wait_for_selector(row_selector, timeout=5000)  # 5s timeout for availability
+                await self.page.wait_for_selector(row_selector, timeout=Constants.TIMEOUT_ROW_SELECTOR)  # 5s timeout for availability
                 logger.debug(f"Row ID {current_expected_id} is now available.")
             except PlaywrightTimeoutError:
                 logger.debug(f"Row ID {current_expected_id} not found within timeout, attempting refocus.")
@@ -451,7 +508,7 @@ class AutoVSCodeCopilot:
                 await self.page.keyboard.press('ArrowUp')
                 # Try again for the same row ID
                 try:
-                    await self.page.wait_for_selector(row_selector, timeout=2000)
+                    await self.page.wait_for_selector(row_selector, timeout=Constants.TIMEOUT_REFOCUS)
                     logger.debug(f"Row ID {current_expected_id} refocused and available.")
                 except PlaywrightTimeoutError:
                     logger.warning(f"Row ID {current_expected_id} still not found after refocus, stopping.")
@@ -511,37 +568,37 @@ class AutoVSCodeCopilot:
             iteration += 1
             logger.debug(f"extract_all_chat_messages iteration {iteration}: checking chat state...")
             
-            state = await self._evaluate_with_retry("""
-                () => new Promise((resolve) => {
-                    const check = () => {
-                        const loading = !!document.querySelector('div.chat-response-loading');
-                        const confirmation = !!Array.from(document.querySelectorAll('div.chat-confirmation-widget a.monaco-button'))
+            state = await self._evaluate_with_retry(f"""
+                () => new Promise((resolve) => {{
+                    const check = () => {{
+                        const loading = !!document.querySelector('{Constants.SELECTOR_CHAT_RESPONSE_LOADING}');
+                        const confirmation = !!Array.from(document.querySelectorAll('{Constants.SELECTOR_CONTINUE_BUTTON}'))
                             .filter(el => el.offsetParent !== null)
-                            .find(el => el.textContent.trim() === 'Continue');
-                        if (!loading || confirmation) {
-                            return { loading, confirmation };
-                        }
+                            .find(el => el.textContent.trim() === '{Constants.CONTINUE_BUTTON_TEXT}');
+                        if (!loading || confirmation) {{
+                            return {{ loading, confirmation }};
+                        }}
                         return null;
-                    };
+                    }};
                     const initial = check();
                     if (initial) return resolve(initial);
 
-                    const observer = new MutationObserver(() => {
+                    const observer = new MutationObserver(() => {{
                         const res = check();
-                        if (res) {
+                        if (res) {{
                             observer.disconnect();
                             clearTimeout(timer);
                             resolve(res);
-                        }
-                    });
-                    observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+                        }}
+                    }});
+                    observer.observe(document.body, {{ childList: true, subtree: true, attributes: true }});
 
                     // Safety timeout (60s) to avoid hanging forever
-                    const timer = setTimeout(() => {
+                    const timer = setTimeout(() => {{
                         observer.disconnect();
-                        resolve({ loading: false, confirmation: false, timeout: true });
-                    }, 60000);
-                })
+                        resolve({{ loading: false, confirmation: false, timeout: true }});
+                    }}, {Constants.TIMEOUT_SAFETY});
+                }})
             """)
 
             logger.debug(f"Chat state: loading={state.get('loading')}, confirmation={state.get('confirmation')}, timeout={state.get('timeout')}")
@@ -553,7 +610,7 @@ class AutoVSCodeCopilot:
             if state.get("confirmation"):
                 logger.debug("Confirmation prompt detected, clicking Continue by innerText...")
                 # Find the button with innerText 'Continue' and click it
-                await self.page.locator('div.chat-confirmation-widget a.monaco-button', has_text="Continue").filter(visible=True).click()
+                await self.page.locator(Constants.SELECTOR_CONTINUE_BUTTON, has_text=Constants.CONTINUE_BUTTON_TEXT).filter(visible=True).click()
                 # Loop again: another loading phase may start after confirmation
                 continue
 
@@ -576,13 +633,13 @@ class AutoVSCodeCopilot:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         picker_locator = self.page.locator(f'a.action-label[aria-label*="{picker_aria_label}"]')
         # Sometimes it takes a while to load the models
-        await picker_locator.wait_for(state='visible', timeout=60000)
+        await picker_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_PICKER_LOCATOR)
         await picker_locator.click()
         context_locator = self.page.locator('div.context-view div.monaco-list')
-        await context_locator.wait_for(state='visible', timeout=10000)
+        await context_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_CONTEXT_LOCATOR)
         option_locator = context_locator.locator(f'div.monaco-list-row.action[aria-label="{option_label}"]')
-        await option_locator.wait_for(state='visible', timeout=100)
-        await option_locator.click(force=True, timeout=1000)
+        await option_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_OPTION_LOCATOR_VISIBLE)
+        await option_locator.click(force=True, timeout=Constants.TIMEOUT_OPTION_CLICK)
         selected = await picker_locator.inner_text()
         if selected != option_label:
             raise RuntimeError(f"Tried to select {picker_aria_label.lower()}: {option_label}, but got: {selected}")
