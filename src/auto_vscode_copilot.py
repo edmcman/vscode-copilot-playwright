@@ -271,7 +271,7 @@ class AutoVSCodeCopilot:
         for p in pending: p.cancel()
 
         if trust_locator_visible in done:
-            logger.debug('Trust and run MCP server dialog is visible.')
+            logger.debug(f'Trust and run MCP server dialog is visible: {await self.page.evaluate("el => el.outerHTML", await trust_locator.element_handle())}')
             await trust_locator.click()
 
         # Await the send button disappearing
