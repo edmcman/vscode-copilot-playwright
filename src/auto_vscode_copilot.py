@@ -29,7 +29,7 @@ class Constants:
     TIMEOUT_INPUT_LOCATOR = 1000
     TIMEOUT_SEND_BUTTON = 1000
     TIMEOUT_TRUST_LOCATOR = 1000
-    TIMEOUT_SEND_BUTTON_HIDDEN = 1000
+    TIMEOUT_SEND_BUTTON_HIDDEN = 5000
     TIMEOUT_SEND_BUTTON_VISIBLE = 60000
     TIMEOUT_ROW_SELECTOR = 5000
     TIMEOUT_REFOCUS = 2000
@@ -37,7 +37,7 @@ class Constants:
     TIMEOUT_CONTEXT_LOCATOR = 10000
     TIMEOUT_OPTION_LOCATOR_VISIBLE = 100
     TIMEOUT_OPTION_CLICK = 1000
-    TIMEOUT_SAFETY = 60000
+    TIMEOUT_SAFETY = 120*1000
     TIMEOUT_SCROLL = 100
     TIMEOUT_SCROLL_DOWN = 200
 
@@ -53,8 +53,8 @@ class Constants:
     SELECTOR_INTERACTIVE_SESSION = 'div.interactive-session'
     SELECTOR_CHAT_RESPONSE_LOADING = 'div.chat-response-loading'
     SELECTOR_TRUST_BUTTON_ROLE = ("button", "Trust", True)  # role, name, exact
-    SELECTOR_CONTINUE_BUTTON = 'div.chat-confirmation-widget a.monaco-button'
-    CONTINUE_BUTTON_TEXT = "Continue"
+    SELECTOR_CONTINUE_BUTTON = 'div.chat-confirmation-widget-buttons a.monaco-button'
+    CONTINUE_BUTTON_TEXT = "Allow"
 
     # JavaScript selectors (for evaluation)
     JS_SELECTORS = {
@@ -557,11 +557,12 @@ class AutoVSCodeCopilot:
     async def extract_all_chat_messages(self):
         """
         Extract all chat messages, handling confirmation and loading in a loop until complete.
+        Also dismisses error dialogs (e.g., 'Error managing packages') if present.
         Uses page.evaluate + MutationObserver to avoid Trusted Types issues with wait_for_function.
         """
         assert self.page is not None, "VS Code not launched. Call launch() first."
         
-        logger.debug("Starting extract_all_chat_messages with confirmation/loading handling...")
+        logger.debug("Starting extract_all_chat_messages with confirmation/loading/error handling...")
         iteration = 0
 
         while True:
@@ -575,8 +576,9 @@ class AutoVSCodeCopilot:
                         const confirmation = !!Array.from(document.querySelectorAll('{Constants.SELECTOR_CONTINUE_BUTTON}'))
                             .filter(el => el.offsetParent !== null)
                             .find(el => el.textContent.trim() === '{Constants.CONTINUE_BUTTON_TEXT}');
-                        if (!loading || confirmation) {{
-                            return {{ loading, confirmation }};
+                        const errorDialog = !!document.querySelector('div.notifications-toasts.visible div.notification-list-item');
+                        if (!loading || confirmation || errorDialog) {{
+                            return {{ loading, confirmation, errorDialog }};
                         }}
                         return null;
                     }};
@@ -593,29 +595,32 @@ class AutoVSCodeCopilot:
                     }});
                     observer.observe(document.body, {{ childList: true, subtree: true, attributes: true }});
 
-                    // Safety timeout (60s) to avoid hanging forever
+                    // Safety timeout to avoid hanging forever
                     const timer = setTimeout(() => {{
                         observer.disconnect();
-                        resolve({{ loading: false, confirmation: false, timeout: true }});
+                        resolve({{ loading: false, confirmation: false, errorDialog: false, timeout: true }});
                     }}, {Constants.TIMEOUT_SAFETY});
                 }})
             """)
 
-            logger.debug(f"Chat state: loading={state.get('loading')}, confirmation={state.get('confirmation')}, timeout={state.get('timeout')}")
+            logger.debug(f"Chat state: loading={state.get('loading')}, confirmation={state.get('confirmation')}, errorDialog={state.get('errorDialog')}, timeout={state.get('timeout')}")
 
             if state.get("timeout"):
-                logger.error("Timed out waiting for chat to progress (loading end or confirmation).")
-                raise RuntimeError("Timed out waiting for chat to progress (loading end or confirmation).")
+                logger.error("Timed out waiting for chat to progress (loading end or confirmation/error).")
+                raise RuntimeError("Timed out waiting for chat to progress (loading end or confirmation/error).")
 
             if state.get("confirmation"):
-                logger.debug("Confirmation prompt detected, clicking Continue by innerText...")
-                # Find the button with innerText 'Continue' and click it
+                logger.debug("Confirmation prompt detected, clicking Continue...")
                 await self.page.locator(Constants.SELECTOR_CONTINUE_BUTTON, has_text=Constants.CONTINUE_BUTTON_TEXT).filter(visible=True).click()
-                # Loop again: another loading phase may start after confirmation
-                continue
+                continue  # Re-check state after handling
 
-            # Reached here: loading has ended and no confirmation is present
-            logger.debug("Chat loading complete, no confirmation needed. Starting message extraction...")
+            if state.get("errorDialog"):
+                logger.debug("Error dialog detected, dismissing...")
+                await self._dismiss_error_dialog()
+                continue  # Re-check state after handling
+
+            # Reached here: loading has ended, no confirmation or error dialog
+            logger.debug("Chat loading complete, no confirmation or error needed. Starting message extraction...")
             break
 
         # Final extraction
@@ -627,6 +632,39 @@ class AutoVSCodeCopilot:
             logger.debug(f"Last msg: {messages[-1]['text']}")
 
         return messages
+
+    async def _dismiss_error_dialog(self):
+        """Dismiss any visible error dialogs in notifications toasts and log their messages."""
+        if not self.page:
+            raise RuntimeError('VS Code not launched. Call launch() first.')
+        
+        error_selector = 'div.notifications-toasts.visible div.notification-list-item'
+        clear_button_selector = 'a.codicon-notifications-clear'
+        message_selector = 'div.notification-list-item-message span'
+        
+        # Find all visible error notifications
+        error_locators = self.page.locator(error_selector)
+        count = await error_locators.count()
+        
+        if count == 0:
+            logger.debug("No error dialogs found.")
+            return False
+        
+        for i in range(count):
+            locator = error_locators.nth(i)
+            try:
+                # Extract and log the error message
+                message_locator = locator.locator(message_selector)
+                error_message = await message_locator.inner_text()
+                logger.info(f"Dismissing error dialog: '{error_message}'")
+                
+                # Click the clear button
+                clear_button = locator.locator(clear_button_selector)
+                await clear_button.click()
+            except PlaywrightTimeoutError:
+                logger.debug(f"Failed to dismiss error dialog {i}.")
+        
+        return True
 
     async def pick_copilot_picker_helper(self, picker_aria_label, option_label=None):
         if not self.page:
