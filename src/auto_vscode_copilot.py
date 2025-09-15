@@ -660,7 +660,7 @@ class AutoVSCodeCopilot:
                 
                 # Click the clear button
                 clear_button = locator.locator(clear_button_selector)
-                await clear_button.click()
+                await clear_button.click(timeout=1000)
             except PlaywrightTimeoutError:
                 logger.debug(f"Failed to dismiss error dialog {i}.")
         
