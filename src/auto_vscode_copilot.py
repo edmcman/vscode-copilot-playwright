@@ -54,6 +54,8 @@ class Constants:
     SELECTOR_CHAT_RESPONSE_LOADING = 'div.chat-response-loading'
     SELECTOR_TRUST_BUTTON_ROLE = ("button", "Trust", True)  # role, name, exact
     SELECTOR_CONTINUE_BUTTON = 'div.chat-confirmation-widget-buttons a.monaco-button'
+    SELECTOR_ERROR_DIALOG = 'div.notifications-toasts.visible div.notification-list-item'
+    SELECTOR_TOOL_LOADING = 'div.interactive-response div.chat-tool-invocation-part div.codicon-loading'
     CONTINUE_BUTTON_TEXT = "Allow"
 
     # JavaScript selectors (for evaluation)
@@ -64,7 +66,8 @@ class Constants:
         'ASSISTANT_RESPONSE': '.interactive-response > .value',
         'RENDERED_MARKDOWN': ':scope > .rendered-markdown',
         'CHAT_PARTS': ':scope > .rendered-markdown, :scope > .chat-tool-invocation-part, :scope > .chat-tool-result-part, :scope > .chat-confirmation-widget',
-        'CONFIRMATION_TITLE': '.chat-confirmation-widget-title .rendered-markdown'
+        'CONFIRMATION_TITLE': '.chat-confirmation-widget-title .rendered-markdown',
+        'ERROR_DIALOG': 'div.notifications-toasts.visible div.notification-list-item'
     }
 
     # Paths
@@ -268,7 +271,15 @@ class AutoVSCodeCopilot:
         send_button_disappears = asyncio.create_task(send_button_locator.wait_for(state='hidden', timeout=Constants.TIMEOUT_SEND_BUTTON_HIDDEN))
 
         done, pending = await asyncio.wait([trust_locator_visible, send_button_disappears], return_when=asyncio.FIRST_COMPLETED)
-        for p in pending: p.cancel()
+        for p in pending:
+            p.cancel()
+            # We need to capture exceptions
+            try:
+                await p
+            except (asyncio.CancelledError, PlaywrightTimeoutError):
+                pass
+            except Exception as e:
+                logger.warning(f"Error while cancelling pending task: {e}")
 
         if trust_locator_visible in done:
             logger.debug(f'Trust and run MCP server dialog is visible: {await self.page.evaluate("el => el.outerHTML", await trust_locator.element_handle())}')
@@ -565,6 +576,16 @@ class AutoVSCodeCopilot:
         logger.debug("Starting extract_all_chat_messages with confirmation/loading/error handling...")
         iteration = 0
 
+        # Helper function for tool loading check (functional style)
+        async def check_tool_loading_on_timeout():
+            is_present = await self.page.locator(Constants.SELECTOR_TOOL_LOADING).count() > 0
+            if is_present:
+                logger.warning("Tool invocation loading indicator detected on safety timeout; possible stuck tool.")
+                terminal_locator = self.page.locator('div.terminal-outer-container')
+                #await terminal_locator.press('Control+c')
+                #logger.debug('Sent Ctrl+C to terminal.')
+            return is_present
+
         while True:
             iteration += 1
             logger.debug(f"extract_all_chat_messages iteration {iteration}: checking chat state...")
@@ -576,9 +597,9 @@ class AutoVSCodeCopilot:
                         const confirmation = !!Array.from(document.querySelectorAll('{Constants.SELECTOR_CONTINUE_BUTTON}'))
                             .filter(el => el.offsetParent !== null)
                             .find(el => el.textContent.trim() === '{Constants.CONTINUE_BUTTON_TEXT}');
-                        const errorDialog = !!document.querySelector('div.notifications-toasts.visible div.notification-list-item');
+                        const errorDialog = !!document.querySelector('{Constants.SELECTOR_ERROR_DIALOG}');
                         if (!loading || confirmation || errorDialog) {{
-                            return {{ loading, confirmation, errorDialog }};
+                            return {{ loading, confirmation, errorDialog, timeout: false }};
                         }}
                         return null;
                     }};
@@ -607,6 +628,8 @@ class AutoVSCodeCopilot:
 
             if state.get("timeout"):
                 logger.error("Timed out waiting for chat to progress (loading end or confirmation/error).")
+                # New: Check for tool loading on timeout
+                await check_tool_loading_on_timeout()
                 raise RuntimeError("Timed out waiting for chat to progress (loading end or confirmation/error).")
 
             if state.get("confirmation"):
@@ -638,7 +661,7 @@ class AutoVSCodeCopilot:
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         
-        error_selector = 'div.notifications-toasts.visible div.notification-list-item'
+        error_selector = Constants.SELECTOR_ERROR_DIALOG
         clear_button_selector = 'a.codicon-notifications-clear'
         message_selector = 'div.notification-list-item-message span'
         
