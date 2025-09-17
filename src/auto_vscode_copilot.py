@@ -37,7 +37,8 @@ class Constants:
     TIMEOUT_CONTEXT_LOCATOR = 10000
     TIMEOUT_OPTION_LOCATOR_VISIBLE = 100
     TIMEOUT_OPTION_CLICK = 1000
-    TIMEOUT_SAFETY = 120*1000
+    # GPT-5 mini is *slow*.
+    TIMEOUT_SAFETY = 5*60*1000
     TIMEOUT_SCROLL = 100
     TIMEOUT_SCROLL_DOWN = 200
 
@@ -53,6 +54,7 @@ class Constants:
     SELECTOR_INTERACTIVE_SESSION = 'div.interactive-session'
     SELECTOR_CHAT_RESPONSE_LOADING = 'div.chat-response-loading'
     SELECTOR_TRUST_BUTTON_ROLE = ("button", "Trust", True)  # role, name, exact
+    SELECTOR_CANCEL_BUTTON_ROLE = ("button", "Cancel (Ctrl+Escape)", True)
     SELECTOR_CONTINUE_BUTTON = 'div.chat-confirmation-widget-buttons a.monaco-button'
     SELECTOR_ERROR_DIALOG = 'div.notifications-toasts.visible div.notification-list-item'
     SELECTOR_TOOL_LOADING = 'div.interactive-response div.chat-tool-invocation-part div.codicon-loading'
@@ -262,34 +264,48 @@ class AutoVSCodeCopilot:
         send_button_locator = self.page.locator(Constants.SELECTOR_SEND_BUTTON)
         await send_button_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_SEND_BUTTON)
         logger.debug('Clicking send button using Locator...')
-        await send_button_locator.click()
+        await send_button_locator.click(timeout=Constants.TIMEOUT_SEND_BUTTON)
 
         # Sometimes VS Code will pop-up a trust/security dialog for MCP servers.
         # We need to handle this case by waiting for the dialog to appear
+        logger.debug('Waiting for either trust dialog or send button to disappear...')
         trust_locator = self.page.get_by_role(role=Constants.SELECTOR_TRUST_BUTTON_ROLE[0], name=Constants.SELECTOR_TRUST_BUTTON_ROLE[1], exact=Constants.SELECTOR_TRUST_BUTTON_ROLE[2])
-        trust_locator_visible = asyncio.create_task(trust_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_TRUST_LOCATOR))
-        send_button_disappears = asyncio.create_task(send_button_locator.wait_for(state='hidden', timeout=Constants.TIMEOUT_SEND_BUTTON_HIDDEN))
+        trust_locator_visible = asyncio.create_task(trust_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_TRUST_LOCATOR), name="trust_locator_visible")
+        send_button_disappears = asyncio.create_task(send_button_locator.wait_for(state='hidden', timeout=Constants.TIMEOUT_SEND_BUTTON_HIDDEN), name="send_button_disappears")
 
-        done, pending = await asyncio.wait([trust_locator_visible, send_button_disappears], return_when=asyncio.FIRST_COMPLETED)
-        for p in pending:
-            p.cancel()
-            # We need to capture exceptions
-            try:
-                await p
-            except (asyncio.CancelledError, PlaywrightTimeoutError):
-                pass
-            except Exception as e:
-                logger.warning(f"Error while cancelling pending task: {e}")
+        try:
+            done, pending = await asyncio.wait([trust_locator_visible, send_button_disappears], return_when=asyncio.FIRST_COMPLETED)
+            logger.debug(f"{len(done)} tasks done, cancelling {len(pending)} pending tasks...")
+            logger.debug(f"done: {done}, pending: {pending}")
+            for p in pending:
+                p.cancel()
+                # Consume any exceptions to avoid errors
+                try:
+                    p.result()
+                except (asyncio.CancelledError, asyncio.InvalidStateError):
+                    pass
+                except Exception as e:
+                    logger.warning(f"Error while consuming exception from pending task: {e}")
 
-        if trust_locator_visible in done:
-            logger.debug(f'Trust and run MCP server dialog is visible: {await self.page.evaluate("el => el.outerHTML", await trust_locator.element_handle())}')
-            await trust_locator.click()
+            if send_button_disappears in done:
+                logger.debug('Send button disappeared, proceeding...')
+
+            if trust_locator_visible in done:
+                logger.debug(f'Trust and run MCP server dialog is visible')
+                try:
+                    logger.debug(f'Trust and run MCP server dialog is visible: {await self.page.evaluate("el => el.outerHTML", await trust_locator.element_handle())}')
+                    await trust_locator.click()
+                except:
+                    logger.warning('Failed to click trust button, continuing anyway...')
+
+        except Exception as e:
+            logger.warning(f"Unknown exception in _send_chat_message_helper: {e}")
+
+
 
         # Await the send button disappearing
+        logger.debug("Waiting for the send button to disappear...")
         await send_button_locator.wait_for(state='hidden', timeout=Constants.TIMEOUT_SEND_BUTTON_HIDDEN)
-        # And reappearing
-        await send_button_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_SEND_BUTTON_VISIBLE)
-        logger.debug('✅ Chat message sent successfully!')
 
     async def send_chat_message(self, message, model_label='GPT-4.1', mode_label='Agent'):
         if not self.page:
@@ -329,14 +345,6 @@ class AutoVSCodeCopilot:
                 self.vscode_process.kill()
                 self.vscode_process.wait()
         logger.info('VS Code tool closed.')
-
-    async def is_chat_loading(self):
-        """
-        Lightweight check for chat loading spinner presence.
-        Returns True if chat is loading, False otherwise.
-        """
-        assert self.page is not None, "VS Code not launched. Call launch() first."
-        return (await self.page.locator(Constants.SELECTOR_CHAT_RESPONSE_LOADING).count()) > 0
 
     def _parse_user_message(self, element_data):
         """Parse user message from DOM element data"""
@@ -478,19 +486,6 @@ class AutoVSCodeCopilot:
         """
         return await self._evaluate_with_retry(script)
 
-    async def _check_chat_state(self):
-        """Check current chat loading/confirmation state"""
-        script = f"""
-            () => {{
-                const loading = !!document.querySelector('{Constants.SELECTOR_CHAT_RESPONSE_LOADING}');
-                const confirmation = !!Array.from(document.querySelectorAll('{Constants.SELECTOR_CONTINUE_BUTTON}'))
-                    .filter(el => el.offsetParent !== null)
-                    .find(el => el.textContent.trim() === '{Constants.CONTINUE_BUTTON_TEXT}');
-                return {{ loading, confirmation }};
-            }}
-        """
-        return await self._evaluate_with_retry(script)
-
     async def _extract_chat_messages_helper(self):
         """Simplified message extraction using Python logic with targeted row ID waits."""
         if not self.page:
@@ -556,14 +551,7 @@ class AutoVSCodeCopilot:
                 logger.debug("No more content to scroll, extraction complete")
                 break
         
-        # Check final state
-        state = await self._check_chat_state()
-        
-        return {
-            'messages': all_messages,
-            'loading': state['loading'],
-            'confirmation': state.get('confirmation', False)
-        }
+        return all_messages
 
     async def extract_all_chat_messages(self):
         """
@@ -581,9 +569,6 @@ class AutoVSCodeCopilot:
             is_present = await self.page.locator(Constants.SELECTOR_TOOL_LOADING).count() > 0
             if is_present:
                 logger.warning("Tool invocation loading indicator detected on safety timeout; possible stuck tool.")
-                terminal_locator = self.page.locator('div.terminal-outer-container')
-                #await terminal_locator.press('Control+c')
-                #logger.debug('Sent Ctrl+C to terminal.')
             return is_present
 
         while True:
@@ -629,8 +614,18 @@ class AutoVSCodeCopilot:
             if state.get("timeout"):
                 logger.error("Timed out waiting for chat to progress (loading end or confirmation/error).")
                 # New: Check for tool loading on timeout
-                await check_tool_loading_on_timeout()
-                raise RuntimeError("Timed out waiting for chat to progress (loading end or confirmation/error).")
+                if await check_tool_loading_on_timeout():
+                    logger.warning("Tool loading detected on timeout, attempting to recover by clicking cancel...")
+                    cancel_locator = self.page.get_by_role(
+                        role=Constants.SELECTOR_CANCEL_BUTTON_ROLE[0],
+                        name=Constants.SELECTOR_CANCEL_BUTTON_ROLE[1],
+                        exact=Constants.SELECTOR_CANCEL_BUTTON_ROLE[2]
+                    ).filter(has=self.page.locator('.codicon-stop-circle'))
+                    await cancel_locator.click(timeout=0)
+
+                    continue  # Re-check state after handling
+                else:
+                    raise RuntimeError("Timed out waiting for chat to progress (loading end or confirmation/error).")
 
             if state.get("confirmation"):
                 logger.debug("Confirmation prompt detected, clicking Continue...")
@@ -648,8 +643,7 @@ class AutoVSCodeCopilot:
 
         # Final extraction
         logger.debug("Calling _extract_chat_messages_helper for final extraction...")
-        result = await self._extract_chat_messages_helper()        
-        messages = result.get('messages', [])
+        messages = await self._extract_chat_messages_helper()        
         logger.debug(f"Extracted {len(messages)} total messages")
         if messages:
             logger.debug(f"Last msg: {messages[-1]['text']}")
