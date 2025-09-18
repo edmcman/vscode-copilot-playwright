@@ -39,6 +39,7 @@ class Constants:
     TIMEOUT_OPTION_CLICK = 1000
     # GPT-5 mini is *slow*.
     TIMEOUT_SAFETY = 5*60*1000
+    TIMEOUT_TOOL_LOADING = 30000
     TIMEOUT_SCROLL = 100
     TIMEOUT_SCROLL_DOWN = 200
 
@@ -287,16 +288,24 @@ class AutoVSCodeCopilot:
                 except Exception as e:
                     logger.warning(f"Error while consuming exception from pending task: {e}")
 
-            if send_button_disappears in done:
+            badness = True
+
+            if send_button_disappears in done and send_button_disappears.exception() is None:
+                badness = False
                 logger.debug('Send button disappeared, proceeding...')
 
-            if trust_locator_visible in done:
+            if trust_locator_visible in done and trust_locator_visible.exception() is None:
+                badness = False
                 logger.debug(f'Trust and run MCP server dialog is visible')
                 try:
                     logger.debug(f'Trust and run MCP server dialog is visible: {await self.page.evaluate("el => el.outerHTML", await trust_locator.element_handle())}')
                     await trust_locator.click()
                 except:
                     logger.warning('Failed to click trust button, continuing anyway...')
+
+            if badness:
+                logger.error("Neither send button disappeared nor trust dialog appeared; something went wrong.")
+                raise RuntimeError("Neither send button disappeared nor trust dialog appeared; something went wrong.")
 
         except Exception as e:
             logger.warning(f"Unknown exception in _send_chat_message_helper: {e}")
@@ -564,19 +573,16 @@ class AutoVSCodeCopilot:
         logger.debug("Starting extract_all_chat_messages with confirmation/loading/error handling...")
         iteration = 0
 
-        # Helper function for tool loading check (functional style)
-        async def check_tool_loading_on_timeout():
-            is_present = await self.page.locator(Constants.SELECTOR_TOOL_LOADING).count() > 0
-            if is_present:
-                logger.warning("Tool invocation loading indicator detected on safety timeout; possible stuck tool.")
-            return is_present
-
         while True:
             iteration += 1
             logger.debug(f"extract_all_chat_messages iteration {iteration}: checking chat state...")
             
             state = await self._evaluate_with_retry(f"""
                 () => new Promise((resolve) => {{
+                    let currentToolLoading = !!document.querySelector('{Constants.SELECTOR_TOOL_LOADING}');
+                    let currentTimeout = currentToolLoading ? {Constants.TIMEOUT_TOOL_LOADING} : {Constants.TIMEOUT_SAFETY};
+                    let timer;
+
                     const check = () => {{
                         const loading = !!document.querySelector('{Constants.SELECTOR_CHAT_RESPONSE_LOADING}');
                         const confirmation = !!Array.from(document.querySelectorAll('{Constants.SELECTOR_CONTINUE_BUTTON}'))
@@ -584,14 +590,29 @@ class AutoVSCodeCopilot:
                             .find(el => el.textContent.trim() === '{Constants.CONTINUE_BUTTON_TEXT}');
                         const errorDialog = !!document.querySelector('{Constants.SELECTOR_ERROR_DIALOG}');
                         if (!loading || confirmation || errorDialog) {{
-                            return {{ loading, confirmation, errorDialog, timeout: false }};
+                            return {{ loading, confirmation, errorDialog, timeout: false, toolLoading: currentToolLoading }};
                         }}
                         return null;
                     }};
+
+                    const setTimer = () => {{
+                        timer = setTimeout(() => {{
+                            observer.disconnect();
+                            resolve({{ loading: false, confirmation: false, errorDialog: false, timeout: true, toolLoading: currentToolLoading }});
+                        }}, currentTimeout);
+                    }};
+
                     const initial = check();
                     if (initial) return resolve(initial);
 
                     const observer = new MutationObserver(() => {{
+                        const newToolLoading = !!document.querySelector('{Constants.SELECTOR_TOOL_LOADING}');
+                        if (newToolLoading !== currentToolLoading) {{
+                            currentToolLoading = newToolLoading;
+                            currentTimeout = currentToolLoading ? {Constants.TIMEOUT_TOOL_LOADING} : {Constants.TIMEOUT_SAFETY};
+                            clearTimeout(timer);
+                            setTimer();
+                        }}
                         const res = check();
                         if (res) {{
                             observer.disconnect();
@@ -601,20 +622,16 @@ class AutoVSCodeCopilot:
                     }});
                     observer.observe(document.body, {{ childList: true, subtree: true, attributes: true }});
 
-                    // Safety timeout to avoid hanging forever
-                    const timer = setTimeout(() => {{
-                        observer.disconnect();
-                        resolve({{ loading: false, confirmation: false, errorDialog: false, timeout: true }});
-                    }}, {Constants.TIMEOUT_SAFETY});
+                    setTimer();
                 }})
             """)
 
-            logger.debug(f"Chat state: loading={state.get('loading')}, confirmation={state.get('confirmation')}, errorDialog={state.get('errorDialog')}, timeout={state.get('timeout')}")
+            logger.debug(f"Chat state: loading={state.get('loading')}, confirmation={state.get('confirmation')}, errorDialog={state.get('errorDialog')}, timeout={state.get('timeout')}, toolLoading={state.get('toolLoading')}")
 
             if state.get("timeout"):
                 logger.error("Timed out waiting for chat to progress (loading end or confirmation/error).")
                 # New: Check for tool loading on timeout
-                if await check_tool_loading_on_timeout():
+                if state.get("toolLoading"):
                     logger.warning("Tool loading detected on timeout, attempting to recover by clicking cancel...")
                     cancel_locator = self.page.get_by_role(
                         role=Constants.SELECTOR_CANCEL_BUTTON_ROLE[0],
