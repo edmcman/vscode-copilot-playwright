@@ -267,6 +267,9 @@ class AutoVSCodeCopilot:
         logger.debug('Clicking send button using Locator...')
         await send_button_locator.click(timeout=Constants.TIMEOUT_SEND_BUTTON)
 
+        # Move the cursor out of the way
+        await self.page.mouse.move(0, 0)
+
         # Sometimes VS Code will pop-up a trust/security dialog for MCP servers.
         # We need to handle this case by waiting for the dialog to appear
         logger.debug('Waiting for either trust dialog or send button to disappear...')
@@ -309,8 +312,7 @@ class AutoVSCodeCopilot:
 
         except Exception as e:
             logger.warning(f"Unknown exception in _send_chat_message_helper: {e}")
-
-
+            raise
 
         # Await the send button disappearing
         logger.debug("Waiting for the send button to disappear...")
