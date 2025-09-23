@@ -29,10 +29,10 @@ class Constants:
     TIMEOUT_INPUT_LOCATOR = 1000
     TIMEOUT_SEND_BUTTON = 1000
     TIMEOUT_TRUST_LOCATOR = 1000
-    TIMEOUT_SEND_BUTTON_HIDDEN = 5000
+    TIMEOUT_SEND_BUTTON_HIDDEN = 15000
     TIMEOUT_SEND_BUTTON_VISIBLE = 60000
     TIMEOUT_ROW_SELECTOR = 5000
-    TIMEOUT_REFOCUS = 2000
+    TIMEOUT_REFOCUS = 20000
     TIMEOUT_PICKER_LOCATOR = 60000
     TIMEOUT_CONTEXT_LOCATOR = 10000
     TIMEOUT_OPTION_LOCATOR_VISIBLE = 100
@@ -57,9 +57,10 @@ class Constants:
     SELECTOR_TRUST_BUTTON_ROLE = ("button", "Trust", True)  # role, name, exact
     SELECTOR_CANCEL_BUTTON_ROLE = ("button", "Cancel (Ctrl+Escape)", True)
     SELECTOR_CONTINUE_BUTTON = 'div.chat-confirmation-widget-buttons a.monaco-button'
+    SELECTOR_CONTINUE_ITERATING_BUTTON = 'div.chat-buttons a.monaco-button'
     SELECTOR_ERROR_DIALOG = 'div.notifications-toasts.visible div.notification-list-item'
     SELECTOR_TOOL_LOADING = 'div.interactive-response div.chat-tool-invocation-part div.codicon-loading'
-    CONTINUE_BUTTON_TEXT = "Allow"
+    CONTINUE_BUTTON_TEXT = ["Allow", "Continue"]
 
     # JavaScript selectors (for evaluation)
     JS_SELECTORS = {
@@ -274,7 +275,7 @@ class AutoVSCodeCopilot:
         # We need to handle this case by waiting for the dialog to appear
         logger.debug('Waiting for either trust dialog or send button to disappear...')
         trust_locator = self.page.get_by_role(role=Constants.SELECTOR_TRUST_BUTTON_ROLE[0], name=Constants.SELECTOR_TRUST_BUTTON_ROLE[1], exact=Constants.SELECTOR_TRUST_BUTTON_ROLE[2])
-        trust_locator_visible = asyncio.create_task(trust_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_TRUST_LOCATOR), name="trust_locator_visible")
+        trust_locator_visible = asyncio.create_task(trust_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_SEND_BUTTON_HIDDEN), name="trust_locator_visible")
         send_button_disappears = asyncio.create_task(send_button_locator.wait_for(state='hidden', timeout=Constants.TIMEOUT_SEND_BUTTON_HIDDEN), name="send_button_disappears")
 
         try:
@@ -307,14 +308,15 @@ class AutoVSCodeCopilot:
                     logger.warning('Failed to click trust button, continuing anyway...')
 
             if badness:
-                logger.error("Neither send button disappeared nor trust dialog appeared; something went wrong.")
-                raise RuntimeError("Neither send button disappeared nor trust dialog appeared; something went wrong.")
+                logger.warning("Neither send button disappeared nor trust dialog appeared; something went wrong.")
+                # Wait more below...
+                #raise RuntimeError("Neither send button disappeared nor trust dialog appeared; something went wrong.")
 
         except Exception as e:
             logger.warning(f"Unknown exception in _send_chat_message_helper: {e}")
             raise
 
-        # Await the send button disappearing
+        # Await the send button disappearing (in case we clicked the trust button)
         logger.debug("Waiting for the send button to disappear...")
         await send_button_locator.wait_for(state='hidden', timeout=Constants.TIMEOUT_SEND_BUTTON_HIDDEN)
 
@@ -587,9 +589,9 @@ class AutoVSCodeCopilot:
 
                     const check = () => {{
                         const loading = !!document.querySelector('{Constants.SELECTOR_CHAT_RESPONSE_LOADING}');
-                        const confirmation = !!Array.from(document.querySelectorAll('{Constants.SELECTOR_CONTINUE_BUTTON}'))
-                            .filter(el => el.offsetParent !== null)
-                            .find(el => el.textContent.trim() === '{Constants.CONTINUE_BUTTON_TEXT}');
+                    const confirmation = !!Array.from(document.querySelectorAll('{Constants.SELECTOR_CONTINUE_BUTTON}, {Constants.SELECTOR_CONTINUE_ITERATING_BUTTON}'))
+                        .filter(el => el.offsetParent !== null)
+                        .find(el => {Constants.CONTINUE_BUTTON_TEXT}.includes(el.textContent.trim()));
                         const errorDialog = !!document.querySelector('{Constants.SELECTOR_ERROR_DIALOG}');
                         if (!loading || confirmation || errorDialog) {{
                             return {{ loading, confirmation, errorDialog, timeout: false, toolLoading: currentToolLoading }};
@@ -648,7 +650,17 @@ class AutoVSCodeCopilot:
 
             if state.get("confirmation"):
                 logger.debug("Confirmation prompt detected, clicking Continue...")
-                await self.page.locator(Constants.SELECTOR_CONTINUE_BUTTON, has_text=Constants.CONTINUE_BUTTON_TEXT).filter(visible=True).click()
+                continue_buttons = await self.page.locator(f"{Constants.SELECTOR_CONTINUE_BUTTON}, {Constants.SELECTOR_CONTINUE_ITERATING_BUTTON}").filter(visible=True).all()
+                match [button for button in continue_buttons if await button.inner_text() in Constants.CONTINUE_BUTTON_TEXT]:
+                    case [button]:
+                        logger.debug(f"Clicking confirmation button with text: '{await button.inner_text()}'")
+                        await button.click()
+                    case []:
+                        logger.warning("No visible confirmation buttons found.")
+                        raise RuntimeError("No visible confirmation buttons found.")
+                    case buttons:
+                        logger.warning(f"Multiple confirmation buttons found: {', '.join(await button.inner_text() for button in buttons)}")
+                        raise RuntimeError("Multiple confirmation buttons found.")
                 continue  # Re-check state after handling
 
             if state.get("errorDialog"):
