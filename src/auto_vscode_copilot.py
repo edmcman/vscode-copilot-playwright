@@ -97,6 +97,7 @@ class AutoVSCodeCopilot:
         self.vscode_port = None
         self.user_data_dir = None
         self.playwright = None
+        self.trace_file = None
         raise RuntimeError(
             "Direct instantiation is not supported. "
             "Use 'await AutoVSCodeCopilot.create(...)' instead."
@@ -117,15 +118,17 @@ class AutoVSCodeCopilot:
         return await self.page.evaluate(script, **kwargs)
 
     @classmethod
-    async def create(cls, workspace_path=None):
+    async def create(cls, workspace_path=None, trace_file=None):
         """Create and initialize an AutoVSCodeCopilot instance asynchronously."""
         self = object.__new__(cls)
         self.browser = None
         self.context = None
         self.page = None
         self.vscode_process = None
+        self.vscode_port = None
         self.user_data_dir = Path(__file__).parent.parent / Constants.USER_DATA_DIR_REL
         self.playwright = None
+        self.trace_file = trace_file
         # Try ports from Constants.PORT_START up to Constants.PORT_MAX, check with socket before launching
         port = Constants.PORT_START
         max_port = Constants.PORT_MAX
@@ -197,6 +200,9 @@ class AutoVSCodeCopilot:
         if not contexts:
             raise RuntimeError("No VS Code contexts found")
         self.context = contexts[0]
+        if self.trace_file:
+            await self.context.tracing.start(screenshots=True, snapshots=True, sources=True)
+            logger.info("Playwright tracing started")
         pages = self.context.pages
         if not pages:
             raise RuntimeError("No VS Code pages found")
@@ -333,6 +339,11 @@ class AutoVSCodeCopilot:
 
     async def close(self):
         logger.info('Closing VS Code tool...')
+        if self.context and self.trace_file:
+            trace_path = Path(self.trace_file)
+            trace_path.parent.mkdir(parents=True, exist_ok=True)
+            await self.context.tracing.stop(path=str(trace_path))
+            logger.info(f"Playwright trace saved to: {trace_path}")
         if self.page:
             try:
                 await self.page.close()

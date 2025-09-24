@@ -38,7 +38,7 @@ import asyncio
 from auto_vscode_copilot import AutoVSCodeCopilot
 
 async def main():
-    tool = await AutoVSCodeCopilot.create(workspace_path='/path/to/workspace')
+    tool = await AutoVSCodeCopilot.create(workspace_path='/path/to/workspace', trace_file='/path/to/trace.zip')
     # ... use other async methods ...
     await tool.close()
 
@@ -50,7 +50,7 @@ asyncio.run(main())
 
 Run the example script directly:
 ```bash
-python src/example.py --output output.json --model GPT-4.1 --mode Agent --prompt "Your prompt here"
+python src/example.py --output output.json --model GPT-4.1 --mode Agent --prompt "Your prompt here" --trace-file output/trace.zip
 ```
 
 ## Run tests
@@ -63,13 +63,13 @@ pytest tests/
 The tool creates an `output` directory containing:
 - DOM dumps as HTML files (timestamped)
 - Screenshots of VS Code (timestamped)
+- Playwright trace files (.zip) at the specified path when trace_file is provided
 
 ## API
 
-
 The `AutoVSCodeCopilot` class provides the following methods:
 
-
+- `create(workspace_path=None, trace_file=None)` - Create and initialize an instance. Set `trace_file` to a file path (e.g., 'output/trace.zip') to enable Playwright tracing.
 - `dumpDOM()` - Extract and save the complete DOM
 - `takeScreenshot(filename=None)` - Capture a screenshot
 - `sendChatMessage(message, modelLabel='GPT-4.1', modeLabel='Agent')` - Send a chat message

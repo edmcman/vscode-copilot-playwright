@@ -20,10 +20,11 @@ async def main():
     parser.add_argument('--mode', '-M', type=str, default='Agent')
     parser.add_argument('--prompt', '-p', type=str, default='Can you help me write a TypeScript function?')
     parser.add_argument('--workspace', '-w', type=str, default=None, help='Path to VS Code workspace or folder')
+    parser.add_argument('--trace-file', type=str, default=None, help='Path to save Playwright trace file (.zip)')
     args = parser.parse_args()
 
     output = {}
-    vscode = await AutoVSCodeCopilot.create(workspace_path=args.workspace)
+    vscode = await AutoVSCodeCopilot.create(workspace_path=args.workspace, trace_file=args.trace_file)
     try:
         logger.info('🚀 Starting VS Code Playwright Tool Demo (Desktop)')
         logger.info(f'📂 Launching VS Code desktop (workspace: {args.workspace})...')
