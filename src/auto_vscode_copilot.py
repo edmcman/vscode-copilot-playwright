@@ -22,12 +22,12 @@ class Constants:
     PORT_MAX = 9300
 
     # Timeouts (in milliseconds)
+    TIMEOUT_LONG = 60000
     TIMEOUT_VSCODE_START_ITERATIONS = 30
     TIMEOUT_VSCODE_START_SLEEP = 1  # seconds
     TIMEOUT_WORKBENCH = 30000
     TIMEOUT_CHAT_LOCATOR = 5000
     TIMEOUT_INPUT_LOCATOR = 1000
-    TIMEOUT_SEND_BUTTON = 1000
     TIMEOUT_TRUST_LOCATOR = 1000
     TIMEOUT_SEND_BUTTON_HIDDEN = 15000
     TIMEOUT_SEND_BUTTON_VISIBLE = 60000
@@ -65,7 +65,7 @@ class Constants:
     # JavaScript selectors (for evaluation)
     JS_SELECTORS = {
         'INTERACTIVE_SESSION': 'div.interactive-session > div.interactive-list',
-        'MONACO_LIST_ROWS': 'div.monaco-list[aria-label="Chat"] div.monaco-list-rows > div.monaco-list-row',
+        'MONACO_LIST_ROWS': 'div.monaco-list[aria-label="Chat"] > div.monaco-scrollable-element > div.monaco-list-rows > div.monaco-list-row',
         'USER_REQUEST': '.interactive-request > .value',
         'ASSISTANT_RESPONSE': '.interactive-response > .value',
         'RENDERED_MARKDOWN': ':scope > .rendered-markdown',
@@ -243,7 +243,7 @@ class AutoVSCodeCopilot:
             await self.page.keyboard.press('Control+Alt+i')
             chat_locator = self.page.locator(Constants.SELECTOR_INTERACTIVE_SESSION)
             logger.debug('Verifying Copilot chat window presence...')
-            await chat_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_CHAT_LOCATOR)
+            await chat_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_LONG)
             logger.info('✅ Copilot chat window successfully opened and verified!')
             return True
         except PlaywrightTimeoutError:
@@ -270,9 +270,9 @@ class AutoVSCodeCopilot:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         logger.debug('Sending chat message...')
         send_button_locator = self.page.locator(Constants.SELECTOR_SEND_BUTTON)
-        await send_button_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_SEND_BUTTON)
-        logger.debug('Clicking send button using Locator...')
-        await send_button_locator.click(timeout=Constants.TIMEOUT_SEND_BUTTON)
+        await send_button_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_LONG)
+        logger.debug(f'Clicking send button using Locator... (enabled={await send_button_locator.is_enabled()} visible={await send_button_locator.is_visible()})')
+        await send_button_locator.click(timeout=Constants.TIMEOUT_LONG)
 
         # Move the cursor out of the way
         await self.page.mouse.move(0, 0)
@@ -339,11 +339,16 @@ class AutoVSCodeCopilot:
 
     async def close(self):
         logger.info('Closing VS Code tool...')
+
         if self.context and self.trace_file:
-            trace_path = Path(self.trace_file)
-            trace_path.parent.mkdir(parents=True, exist_ok=True)
-            await self.context.tracing.stop(path=str(trace_path))
-            logger.info(f"Playwright trace saved to: {trace_path}")
+            try:
+                logger.info(f'Saving playwright trace to: {self.trace_file}')
+                trace_path = Path(self.trace_file)
+                trace_path.parent.mkdir(parents=True, exist_ok=True)
+                await self.context.tracing.stop(path=trace_path)
+                logger.info(f"Playwright trace saved to: {trace_path}")
+            except Exception as e:
+                logger.warning(f"Error saving Playwright trace: {e}")
         if self.page:
             try:
                 await self.page.close()
@@ -527,7 +532,7 @@ class AutoVSCodeCopilot:
 
         for attempt in range(max_attempts):
             # Wait for the expected row ID selector to be available using Playwright
-            row_selector = f'div.interactive-list div.monaco-list[aria-label="Chat"] div.monaco-list-row[data-index="{current_expected_id}"]'
+            row_selector = f'div.interactive-list > div.monaco-list[aria-label="Chat"] > div.monaco-scrollable-element > div.monaco-list-rows > div.monaco-list-row[data-index="{current_expected_id}"]'
             try:
                 await self.page.wait_for_selector(row_selector, timeout=Constants.TIMEOUT_ROW_SELECTOR)  # 5s timeout for availability
                 logger.debug(f"Row ID {current_expected_id} is now available.")
@@ -586,6 +591,7 @@ class AutoVSCodeCopilot:
         assert self.page is not None, "VS Code not launched. Call launch() first."
         
         logger.debug("Starting extract_all_chat_messages with confirmation/loading/error handling...")
+        await self.page.wait_for_load_state('domcontentloaded')
         iteration = 0
 
         while True:
@@ -594,19 +600,28 @@ class AutoVSCodeCopilot:
             
             state = await self._evaluate_with_retry(f"""
                 () => new Promise((resolve) => {{
-                    let currentToolLoading = !!document.querySelector('{Constants.SELECTOR_TOOL_LOADING}');
+                    // Pure functional helpers for selector checks
+                    const isLoading = () => !!document.querySelector('{Constants.SELECTOR_CHAT_RESPONSE_LOADING}');
+                    const isConfirmation = () => !!Array.from(document.querySelectorAll('{Constants.SELECTOR_CONTINUE_BUTTON}, {Constants.SELECTOR_CONTINUE_ITERATING_BUTTON}'))
+                        .filter(el => el.offsetParent !== null)
+                        .find(el => {Constants.CONTINUE_BUTTON_TEXT}.includes(el.textContent.trim()));
+                    const isErrorDialog = () => !!document.querySelector('{Constants.SELECTOR_ERROR_DIALOG}');
+                    const isToolLoading = () => !!document.querySelector('{Constants.SELECTOR_TOOL_LOADING}');
+
+                    let currentToolLoading = isToolLoading();
                     let currentTimeout = currentToolLoading ? {Constants.TIMEOUT_TOOL_LOADING} : {Constants.TIMEOUT_SAFETY};
                     let timer;
 
                     const check = () => {{
-                        const loading = !!document.querySelector('{Constants.SELECTOR_CHAT_RESPONSE_LOADING}');
-                    const confirmation = !!Array.from(document.querySelectorAll('{Constants.SELECTOR_CONTINUE_BUTTON}, {Constants.SELECTOR_CONTINUE_ITERATING_BUTTON}'))
-                        .filter(el => el.offsetParent !== null)
-                        .find(el => {Constants.CONTINUE_BUTTON_TEXT}.includes(el.textContent.trim()));
-                        const errorDialog = !!document.querySelector('{Constants.SELECTOR_ERROR_DIALOG}');
+                        console.log('Checking chat state: loading, confirmation, errorDialog, toolLoading...');
+                        const loading = isLoading();
+                        const confirmation = isConfirmation();
+                        const errorDialog = isErrorDialog();
                         if (!loading || confirmation || errorDialog) {{
+                            console.log('Chat state determined');
                             return {{ loading, confirmation, errorDialog, timeout: false, toolLoading: currentToolLoading }};
                         }}
+                        console.log('Chat state not determined, continuing...');
                         return null;
                     }};
 
@@ -621,7 +636,7 @@ class AutoVSCodeCopilot:
                     if (initial) return resolve(initial);
 
                     const observer = new MutationObserver(() => {{
-                        const newToolLoading = !!document.querySelector('{Constants.SELECTOR_TOOL_LOADING}');
+                        const newToolLoading = isToolLoading();
                         if (newToolLoading !== currentToolLoading) {{
                             currentToolLoading = newToolLoading;
                             currentTimeout = currentToolLoading ? {Constants.TIMEOUT_TOOL_LOADING} : {Constants.TIMEOUT_SAFETY};
@@ -635,7 +650,16 @@ class AutoVSCodeCopilot:
                             resolve(res);
                         }}
                     }});
-                    observer.observe(document.body, {{ childList: true, subtree: true, attributes: true }});
+                    
+                    // Narrow scope to chat session container to reduce interference
+                    const chatContainer = document.querySelector('{Constants.SELECTOR_INTERACTIVE_SESSION}');
+                    if (chatContainer) {{
+                        observer.observe(chatContainer, {{ childList: true, subtree: true, attributes: true }});
+                    }} else {{
+                        // Fallback to body if container not found, but log warning
+                        console.warn('Chat container not found, observing document.body');
+                        observer.observe(document.body, {{ childList: true, subtree: true, attributes: true }});
+                    }}
 
                     setTimer();
                 }})
@@ -670,7 +694,8 @@ class AutoVSCodeCopilot:
                         logger.warning("No visible confirmation buttons found.")
                         raise RuntimeError("No visible confirmation buttons found.")
                     case buttons:
-                        logger.warning(f"Multiple confirmation buttons found: {', '.join(await button.inner_text() for button in buttons)}")
+                        texts = [await button.inner_text() for button in buttons]
+                        logger.warning(f"Multiple confirmation buttons found: {', '.join(texts)}")
                         raise RuntimeError("Multiple confirmation buttons found.")
                 continue  # Re-check state after handling
 
