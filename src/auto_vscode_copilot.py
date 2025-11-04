@@ -48,6 +48,7 @@ class Constants:
     MAX_ATTEMPTS_EXTRACTION = 200
     TYPING_DELAY = 10
     TERMINATE_TIMEOUT = 2  # seconds
+    STABILITY_CHECK_COUNT = 3  # Number of consecutive stable checks required
 
     # Selectors
     SELECTOR_WORKBENCH = '.monaco-workbench'
@@ -88,6 +89,24 @@ def _is_port_in_use(port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         return s.connect_ex(('localhost', port)) == 0
 
+def _log_retry_before_sleep(retry_state):
+    """Log retry attempt and include exception details when available."""
+    exc = None
+    try:
+        exc = retry_state.outcome.exception()
+    except Exception:
+        exc = None
+
+    attempt = getattr(retry_state, "attempt_number", "unknown")
+    max_attempts = getattr(Constants, "RETRY_STOP_ATTEMPTS", "unknown")
+    if exc:
+        logger.warning(
+            f"Evaluation failed (attempt {attempt}/{max_attempts}), retrying... "
+            f"Exception: {type(exc).__name__}: {exc}"
+        )
+    else:
+        logger.warning(f"Evaluation failed (attempt {attempt}/{max_attempts}), retrying...")
+
 class AutoVSCodeCopilot:
     def __init__(self, *args, **kwargs):
         # for mypy
@@ -108,15 +127,18 @@ class AutoVSCodeCopilot:
         stop=stop_after_attempt(Constants.RETRY_STOP_ATTEMPTS),
         wait=wait_exponential(multiplier=Constants.RETRY_WAIT_MULTIPLIER, min=Constants.RETRY_WAIT_MIN, max=Constants.RETRY_WAIT_MAX),
         retry=retry_if_exception_type(PlaywrightError),
-        before_sleep=lambda retry_state: logger.warning(
-            f"Execution context destroyed (attempt {retry_state.attempt_number}/3), retrying..."
-        )
+        before_sleep=_log_retry_before_sleep
     )
     async def _evaluate_with_retry(self, script: str, **kwargs):
-        """Helper to evaluate JavaScript with retry on execution context errors."""
+        """Helper to evaluate JavaScript with retry on execution context errors. Logs exceptions with traceback."""
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
-        return await self.page.evaluate(script, **kwargs)
+        try:
+            return await self.page.evaluate(script, **kwargs)
+        except Exception as e:
+            # Log full traceback and include a short message with the failing script
+            logger.exception("Exception during page.evaluate. Script: %s", script)
+            raise
 
     @classmethod
     async def create(cls, workspace_path=None, trace_file=None):
@@ -323,9 +345,10 @@ class AutoVSCodeCopilot:
             logger.warning(f"Unknown exception in _send_chat_message_helper: {e}")
             raise
 
+        # ejs I don't think we need to do this anymore
         # Await the send button disappearing (in case we clicked the trust button)
-        logger.debug("Waiting for the send button to disappear...")
-        await send_button_locator.wait_for(state='hidden', timeout=Constants.TIMEOUT_SEND_BUTTON_HIDDEN)
+        #logger.debug("Waiting for the send button to disappear...")
+        #await send_button_locator.wait_for(state='hidden', timeout=Constants.TIMEOUT_SEND_BUTTON_HIDDEN)
 
     async def send_chat_message(self, message, model_label='GPT-4.1', mode_label='Agent'):
         if not self.page:
@@ -600,7 +623,7 @@ class AutoVSCodeCopilot:
             logger.debug(f"extract_all_chat_messages iteration {iteration}: checking chat state...")
             
             state = await self._evaluate_with_retry(f"""
-                () => new Promise((resolve) => {{
+                async () => {{
                     // Pure functional helpers for selector checks
                     const isLoading = () => !!document.querySelector('{Constants.SELECTOR_CHAT_RESPONSE_LOADING}');
                     const isConfirmation = () => !!Array.from(document.querySelectorAll('{Constants.SELECTOR_CONTINUE_BUTTON}, {Constants.SELECTOR_CONTINUE_ITERATING_BUTTON}'))
@@ -612,58 +635,82 @@ class AutoVSCodeCopilot:
                     let currentToolLoading = isToolLoading();
                     let currentTimeout = currentToolLoading ? {Constants.TIMEOUT_TOOL_LOADING} : {Constants.TIMEOUT_SAFETY};
                     let timer;
+                    let stableCount = 0;
 
-                    const check = () => {{
-                        console.log('Checking chat state: loading, confirmation, errorDialog, toolLoading...');
+                    const checkAsync = async () => {{
+                        //console.log('Checking chat state: loading, confirmation, errorDialog, toolLoading...');
                         const loading = isLoading();
                         const confirmation = isConfirmation();
                         const errorDialog = isErrorDialog();
-                        if (!loading || confirmation || errorDialog) {{
+                        
+                        // Stabilize loading state - require consistent non-loading state
+                        if (!loading && !confirmation && !errorDialog) {{
+                            stableCount++;
+                            
+                            // Brief sleep to prevent rapid polling during stabilization
+                            await new Promise(resolve => setTimeout(resolve, 50));
+                            
+                            // Require {Constants.STABILITY_CHECK_COUNT} consecutive stable checks to prevent flicker
+                            if (stableCount >= {Constants.STABILITY_CHECK_COUNT}) {{
+                                console.log('Chat state determined (stable)');
+                                return {{ loading: false, confirmation, errorDialog, timeout: false, toolLoading: currentToolLoading }};
+                            }}
+                            console.log(`Chat state stabilizing... (${{stableCount}}/{Constants.STABILITY_CHECK_COUNT})`);
+                            return null;
+                        }}
+                        
+                        // Reset stability counter on any active state
+                        stableCount = 0;
+                        
+                        if (confirmation || errorDialog) {{
                             console.log('Chat state determined');
                             return {{ loading, confirmation, errorDialog, timeout: false, toolLoading: currentToolLoading }};
                         }}
+                        
                         console.log('Chat state not determined, continuing...');
                         return null;
                     }};
 
-                    const setTimer = () => {{
-                        timer = setTimeout(() => {{
-                            observer.disconnect();
-                            resolve({{ loading: false, confirmation: false, errorDialog: false, timeout: true, toolLoading: currentToolLoading }});
-                        }}, currentTimeout);
-                    }};
+                    return new Promise(async (resolve) => {{
+                        const setTimer = () => {{
+                            timer = setTimeout(() => {{
+                                observer.disconnect();
+                                resolve({{ loading: false, confirmation: false, errorDialog: false, timeout: true, toolLoading: currentToolLoading }});
+                            }}, currentTimeout);
+                        }};
 
-                    const initial = check();
-                    if (initial) return resolve(initial);
+                        const initial = await checkAsync();
+                        if (initial) return resolve(initial);
 
-                    const observer = new MutationObserver(() => {{
-                        const newToolLoading = isToolLoading();
-                        if (newToolLoading !== currentToolLoading) {{
-                            currentToolLoading = newToolLoading;
-                            currentTimeout = currentToolLoading ? {Constants.TIMEOUT_TOOL_LOADING} : {Constants.TIMEOUT_SAFETY};
-                            clearTimeout(timer);
-                            setTimer();
+                        const observer = new MutationObserver(async () => {{
+                            const newToolLoading = isToolLoading();
+                            if (newToolLoading !== currentToolLoading) {{
+                                currentToolLoading = newToolLoading;
+                                currentTimeout = currentToolLoading ? {Constants.TIMEOUT_TOOL_LOADING} : {Constants.TIMEOUT_SAFETY};
+                                clearTimeout(timer);
+                                setTimer();
+                            }}
+                            const res = await checkAsync();
+                            if (res) {{
+                                observer.disconnect();
+                                clearTimeout(timer);
+                                resolve(res);
+                            }}
+                        }});
+                        
+                        // Narrow scope to chat session container to reduce interference
+                        const chatContainer = document.querySelector('{Constants.SELECTOR_INTERACTIVE_SESSION}');
+                        if (chatContainer) {{
+                            observer.observe(chatContainer, {{ childList: true, subtree: true, attributes: true }});
+                        }} else {{
+                            // Fallback to body if container not found, but log warning
+                            console.warn('Chat container not found, observing document.body');
+                            observer.observe(document.body, {{ childList: true, subtree: true, attributes: true }});
                         }}
-                        const res = check();
-                        if (res) {{
-                            observer.disconnect();
-                            clearTimeout(timer);
-                            resolve(res);
-                        }}
+
+                        setTimer();
                     }});
-                    
-                    // Narrow scope to chat session container to reduce interference
-                    const chatContainer = document.querySelector('{Constants.SELECTOR_INTERACTIVE_SESSION}');
-                    if (chatContainer) {{
-                        observer.observe(chatContainer, {{ childList: true, subtree: true, attributes: true }});
-                    }} else {{
-                        // Fallback to body if container not found, but log warning
-                        console.warn('Chat container not found, observing document.body');
-                        observer.observe(document.body, {{ childList: true, subtree: true, attributes: true }});
-                    }}
-
-                    setTimer();
-                }})
+                }}
             """)
 
             logger.debug(f"Chat state: loading={state.get('loading')}, confirmation={state.get('confirmation')}, errorDialog={state.get('errorDialog')}, timeout={state.get('timeout')}, toolLoading={state.get('toolLoading')}")
