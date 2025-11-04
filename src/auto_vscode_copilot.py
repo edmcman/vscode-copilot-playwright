@@ -1,4 +1,5 @@
 import asyncio
+import json
 import requests
 import socket
 import time
@@ -37,8 +38,8 @@ class Constants:
     TIMEOUT_CONTEXT_LOCATOR = 10000
     TIMEOUT_OPTION_LOCATOR_VISIBLE = 100
     TIMEOUT_OPTION_CLICK = 1000
-    # GPT-5 mini is *slow*.
-    TIMEOUT_SAFETY = 5*60*1000
+    # Some models can be really *slow*.
+    TIMEOUT_SAFETY = 10*60*1000
     TIMEOUT_TOOL_LOADING = 30000
     TIMEOUT_SCROLL = 100
     TIMEOUT_SCROLL_DOWN = 200
@@ -759,7 +760,7 @@ class AutoVSCodeCopilot:
         await picker_locator.click()
         context_locator = self.page.locator('div.context-view div.monaco-list')
         await context_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_CONTEXT_LOCATOR)
-        option_locator = context_locator.locator(f'div.monaco-list-row.action[aria-label="{option_label}"]')
+        option_locator = context_locator.locator(f'div.monaco-list-row.action > span.title:has-text({json.dumps(option_label)})')
         await option_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_OPTION_LOCATOR_VISIBLE)
         await option_locator.click(force=True, timeout=Constants.TIMEOUT_OPTION_CLICK)
         selected = await picker_locator.inner_text()
