@@ -50,6 +50,8 @@ class Constants:
     TERMINATE_TIMEOUT = 2  # seconds
     STABILITY_CHECK_COUNT = 3  # Number of consecutive stable checks required
 
+    WAIT_AFTER_CLICK = 0.1
+
     # Selectors
     SELECTOR_WORKBENCH = '.monaco-workbench'
     SELECTOR_CHAT_INPUT_CONTAINER = 'div.chat-input-container'
@@ -60,7 +62,9 @@ class Constants:
     SELECTOR_CANCEL_BUTTON_ROLE = ("button", "Cancel (Ctrl+Escape)", True)
     SELECTOR_CONTINUE_BUTTON = 'div.chat-confirmation-widget-buttons a.monaco-button'
     SELECTOR_CONTINUE_ITERATING_BUTTON = 'div.chat-buttons a.monaco-button'
-    SELECTOR_ERROR_DIALOG = 'div.notifications-toasts.visible div.notification-list-item'
+    SELECTOR_ERROR_OVERLAY = 'div.notifications-toasts.visible div.notification-list-item'
+    # Selector for the "Try Again" chat error button inside the most recent response
+    SELECTOR_CHAT_ERROR = 'div.interactive-response.chat-most-recent-response div.chat-error-confirmation a.monaco-text-button'
     SELECTOR_TOOL_LOADING = 'div.interactive-response div.chat-tool-invocation-part div.codicon-loading'
     CONTINUE_BUTTON_TEXT = ["Allow", "Continue"]
 
@@ -73,7 +77,7 @@ class Constants:
         'RENDERED_MARKDOWN': ':scope > .rendered-markdown',
         'CHAT_PARTS': ':scope > .rendered-markdown, :scope > .chat-tool-invocation-part, :scope > .chat-tool-result-part, :scope > .chat-confirmation-widget',
         'CONFIRMATION_TITLE': '.chat-confirmation-widget-title .rendered-markdown',
-        'ERROR_DIALOG': 'div.notifications-toasts.visible div.notification-list-item'
+        'ERROR_OVERLAY': 'div.notifications-toasts.visible div.notification-list-item'
     }
 
     # Paths
@@ -629,7 +633,13 @@ class AutoVSCodeCopilot:
                     const isConfirmation = () => !!Array.from(document.querySelectorAll('{Constants.SELECTOR_CONTINUE_BUTTON}, {Constants.SELECTOR_CONTINUE_ITERATING_BUTTON}'))
                         .filter(el => el.offsetParent !== null)
                         .find(el => {Constants.CONTINUE_BUTTON_TEXT}.includes(el.textContent.trim()));
-                    const isErrorDialog = () => !!document.querySelector('{Constants.SELECTOR_ERROR_DIALOG}');
+                    const isErrorOverlay = () => !!document.querySelector('{Constants.SELECTOR_ERROR_OVERLAY}');
+                    const isChatError = () => {{
+                        const nodes = Array.from(document.querySelectorAll('{Constants.SELECTOR_CHAT_ERROR}'));
+                        //console.log(`Found ${{nodes.length}} chat error nodes`);
+                        nodes.forEach(btn => console.log(`  Chat error button text: '${{btn.textContent.trim()}}' visible=${{btn.offsetParent !== null}}`));
+                        return nodes.some(el => el.offsetParent !== null && el.textContent.trim() === 'Try Again');
+                    }};
                     const isToolLoading = () => !!document.querySelector('{Constants.SELECTOR_TOOL_LOADING}');
 
                     let currentToolLoading = isToolLoading();
@@ -641,10 +651,11 @@ class AutoVSCodeCopilot:
                         //console.log('Checking chat state: loading, confirmation, errorDialog, toolLoading...');
                         const loading = isLoading();
                         const confirmation = isConfirmation();
-                        const errorDialog = isErrorDialog();
+                        const errorOverlay = isErrorOverlay();
+                        const chatError = isChatError();
                         
                         // Stabilize loading state - require consistent non-loading state
-                        if (!loading && !confirmation && !errorDialog) {{
+                        if (!loading && !confirmation && !errorOverlay && !chatError) {{
                             stableCount++;
                             
                             // Brief sleep to prevent rapid polling during stabilization
@@ -653,7 +664,7 @@ class AutoVSCodeCopilot:
                             // Require {Constants.STABILITY_CHECK_COUNT} consecutive stable checks to prevent flicker
                             if (stableCount >= {Constants.STABILITY_CHECK_COUNT}) {{
                                 console.log('Chat state determined (stable)');
-                                return {{ loading: false, confirmation, errorDialog, timeout: false, toolLoading: currentToolLoading }};
+                                return {{ loading: false, confirmation, errorOverlay, chatError, timeout: false, toolLoading: currentToolLoading }};
                             }}
                             console.log(`Chat state stabilizing... (${{stableCount}}/{Constants.STABILITY_CHECK_COUNT})`);
                             return null;
@@ -662,9 +673,9 @@ class AutoVSCodeCopilot:
                         // Reset stability counter on any active state
                         stableCount = 0;
                         
-                        if (confirmation || errorDialog) {{
+                        if (confirmation || errorOverlay || chatError) {{
                             console.log('Chat state determined');
-                            return {{ loading, confirmation, errorDialog, timeout: false, toolLoading: currentToolLoading }};
+                            return {{ loading, confirmation, errorOverlay, chatError, timeout: false, toolLoading: currentToolLoading }};
                         }}
                         
                         console.log('Chat state not determined, continuing...');
@@ -672,17 +683,32 @@ class AutoVSCodeCopilot:
                     }};
 
                     return new Promise(async (resolve) => {{
+                        let observer = null;
+                        let timer = null;
+                        
+                        const cleanup = () => {{
+                            if (timer) {{
+                                clearTimeout(timer);
+                                timer = null;
+                            }}
+                            if (observer) {{
+                                observer.disconnect();
+                                observer = null;
+                            }}
+                        }};
+                        
+                        const resolveWithCleanup = (result) => {{
+                            cleanup();
+                            resolve(result);
+                        }};
+                        
                         const setTimer = () => {{
                             timer = setTimeout(() => {{
-                                observer.disconnect();
-                                resolve({{ loading: false, confirmation: false, errorDialog: false, timeout: true, toolLoading: currentToolLoading }});
+                                resolveWithCleanup({{ loading: false, confirmation: false, errorOverlay: false, chatError: false, timeout: true, toolLoading: currentToolLoading }});
                             }}, currentTimeout);
                         }};
-
-                        const initial = await checkAsync();
-                        if (initial) return resolve(initial);
-
-                        const observer = new MutationObserver(async () => {{
+                        
+                        const handleMutation = async () => {{
                             const newToolLoading = isToolLoading();
                             if (newToolLoading !== currentToolLoading) {{
                                 currentToolLoading = newToolLoading;
@@ -745,12 +771,19 @@ class AutoVSCodeCopilot:
                         texts = [await button.inner_text() for button in buttons]
                         logger.warning(f"Multiple confirmation buttons found: {', '.join(texts)}")
                         raise RuntimeError("Multiple confirmation buttons found.")
+                # Wait a bit for the chat to process the confirmation
+                await asyncio.sleep(Constants.WAIT_AFTER_CLICK)
                 continue  # Re-check state after handling
 
-            if state.get("errorDialog"):
-                logger.debug("Error dialog detected, dismissing...")
-                await self._dismiss_error_dialog()
-                continue  # Re-check state after handling
+            if state.get("chatError"):
+                logger.debug("Chat error detected (Try Again), clicking Try Again button...")
+                await self._click_chat_error_try_again()
+                continue
+
+            if state.get("errorOverlay"):
+                logger.debug("Error overlay detected, dismissing...")
+                await self._dismiss_error_overlay()
+                continue
 
             # Reached here: loading has ended, no confirmation or error dialog
             logger.debug("Chat loading complete, no confirmation or error needed. Starting message extraction...")
@@ -765,12 +798,20 @@ class AutoVSCodeCopilot:
 
         return messages
 
-    async def _dismiss_error_dialog(self):
-        """Dismiss any visible error dialogs in notifications toasts and log their messages."""
+    async def _click_chat_error_try_again(self):
+        """Click the Try Again button in a chat error."""
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         
-        error_selector = Constants.SELECTOR_ERROR_DIALOG
+        chat_try_locator = self.page.locator(Constants.SELECTOR_CHAT_ERROR).filter(visible=True).click()
+        await asyncio.sleep(Constants.WAIT_AFTER_CLICK)
+
+    async def _dismiss_error_overlay(self):
+        """Dismiss any visible error overlays (notifications toasts) and log their messages."""
+        if not self.page:
+            raise RuntimeError('VS Code not launched. Call launch() first.')
+        
+        error_selector = Constants.SELECTOR_ERROR_OVERLAY
         clear_button_selector = 'a.codicon-notifications-clear'
         message_selector = 'div.notification-list-item-message span'
         
