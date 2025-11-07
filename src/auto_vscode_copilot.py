@@ -646,7 +646,6 @@ class AutoVSCodeCopilot:
 
                     let currentToolLoading = isToolLoading();
                     let currentTimeout = currentToolLoading ? {Constants.TIMEOUT_TOOL_LOADING} : {Constants.TIMEOUT_SAFETY};
-                    let timer;
                     let stableCount = 0;
 
                     const checkAsync = async () => {{
@@ -684,62 +683,61 @@ class AutoVSCodeCopilot:
                         return null;
                     }};
 
-                    return new Promise(async (resolve) => {{
-                        let observer = null;
-                        let timer = null;
-                        
-                        const cleanup = () => {{
-                            if (timer) {{
-                                clearTimeout(timer);
-                                timer = null;
-                            }}
-                            if (observer) {{
-                                observer.disconnect();
-                                observer = null;
-                            }}
-                        }};
-                        
-                        const resolveWithCleanup = (result) => {{
-                            cleanup();
-                            resolve(result);
-                        }};
-                        
-                        const setTimer = () => {{
-                            timer = setTimeout(() => {{
-                                resolveWithCleanup({{ loading: false, confirmation: false, errorOverlay: false, chatError: false, timeout: true, toolLoading: currentToolLoading }});
-                            }}, currentTimeout);
-                        }};
-                        
-                        const handleMutation = async () => {{
-                            const newToolLoading = isToolLoading();
-                            if (newToolLoading !== currentToolLoading) {{
-                                currentToolLoading = newToolLoading;
-                                currentTimeout = currentToolLoading ? {Constants.TIMEOUT_TOOL_LOADING} : {Constants.TIMEOUT_SAFETY};
-                                clearTimeout(timer);
-                                setTimer();
-                            }}
-                            const res = await checkAsync();
-                            if (res) {{
-                                resolveWithCleanup(res);
-                            }}
-                        }};
-
-                        const initial = await checkAsync();
-                        if (initial) return resolveWithCleanup(initial);
-
-                        observer = new MutationObserver(handleMutation);
-                        
-                        // Narrow scope to chat session container to reduce interference
-                        const chatContainer = document.querySelector('{Constants.SELECTOR_INTERACTIVE_SESSION}');
-                        if (!chatContainer) {{
-                            console.error('Chat container not found');
-                            return resolveWithCleanup({{ loading: false, confirmation: false, errorOverlay: false, chatError: false, timeout: true, toolLoading: currentToolLoading }});
+                    let observer = null;
+                    let timer = null;
+                    
+                    const cleanup = () => {{
+                        if (timer) {{
+                            clearTimeout(timer);
+                            timer = null;
                         }}
-                        
-                        observer.observe(chatContainer, {{ childList: true, subtree: true, attributes: true }});
+                        if (observer) {{
+                            observer.disconnect();
+                            observer = null;
+                        }}
+                    }};
+                    
+                    try {{
+                        return await new Promise(async (resolve, reject) => {{
+                            const setTimer = () => {{
+                                timer = setTimeout(() => {{
+                                    resolve({{ loading: false, confirmation: false, errorOverlay: false, chatError: false, timeout: true, toolLoading: currentToolLoading }});
+                                }}, currentTimeout);
+                            }};
 
-                        setTimer();
-                    }});
+                            const handleMutation = async () => {{
+                                const newToolLoading = isToolLoading();
+                                if (newToolLoading !== currentToolLoading) {{
+                                    currentToolLoading = newToolLoading;
+                                    currentTimeout = currentToolLoading ? {Constants.TIMEOUT_TOOL_LOADING} : {Constants.TIMEOUT_SAFETY};
+                                    clearTimeout(timer);
+                                    setTimer();
+                                }}
+                                const res = await checkAsync();
+                                if (res) {{
+                                    resolve(res);
+                                }}
+                            }};
+
+                            const initial = await checkAsync();
+                            if (initial) return resolve(initial);
+
+                            observer = new MutationObserver(handleMutation);
+                            
+                            // Narrow scope to chat session container to reduce interference
+                            const chatContainer = document.querySelector('{Constants.SELECTOR_INTERACTIVE_SESSION}');
+                            if (!chatContainer) {{
+                                console.error('Chat container not found');
+                                return resolve({{ loading: false, confirmation: false, errorOverlay: false, chatError: false, timeout: true, toolLoading: currentToolLoading }});
+                            }}
+                            
+                            observer.observe(chatContainer, {{ childList: true, subtree: true, attributes: true }});
+
+                            setTimer();
+                        }});
+                    }} finally {{
+                        cleanup();
+                    }}
                 }}
             """)
 
