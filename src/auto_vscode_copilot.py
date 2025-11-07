@@ -38,8 +38,10 @@ class Constants:
     TIMEOUT_CONTEXT_LOCATOR = 10000
     TIMEOUT_OPTION_LOCATOR_VISIBLE = 100
     TIMEOUT_OPTION_CLICK = 1000
-    # Some models can be really *slow*.
-    TIMEOUT_SAFETY = 10*60*1000
+    # Some models can be really *slow*.  VS Code seems like it has an internal
+    # timeout of 10 minutes before it displays the "Try Again" button.  So we
+    # choose slightly longer than that.
+    TIMEOUT_SAFETY = 11*60*1000
     TIMEOUT_TOOL_LOADING = 30000
     TIMEOUT_SCROLL = 100
     TIMEOUT_SCROLL_DOWN = 200
@@ -718,28 +720,31 @@ class AutoVSCodeCopilot:
                             }}
                             const res = await checkAsync();
                             if (res) {{
-                                observer.disconnect();
-                                clearTimeout(timer);
-                                resolve(res);
+                                resolveWithCleanup(res);
                             }}
-                        }});
+                        }};
+
+                        const initial = await checkAsync();
+                        if (initial) return resolveWithCleanup(initial);
+
+                        observer = new MutationObserver(handleMutation);
                         
                         // Narrow scope to chat session container to reduce interference
                         const chatContainer = document.querySelector('{Constants.SELECTOR_INTERACTIVE_SESSION}');
-                        if (chatContainer) {{
-                            observer.observe(chatContainer, {{ childList: true, subtree: true, attributes: true }});
-                        }} else {{
-                            // Fallback to body if container not found, but log warning
-                            console.warn('Chat container not found, observing document.body');
-                            observer.observe(document.body, {{ childList: true, subtree: true, attributes: true }});
+                        if (!chatContainer) {{
+                            console.error('Chat container not found');
+                            return resolveWithCleanup({{ loading: false, confirmation: false, errorOverlay: false, chatError: false, timeout: true, toolLoading: currentToolLoading }});
                         }}
+                        
+                        observer.observe(chatContainer, {{ childList: true, subtree: true, attributes: true }});
 
                         setTimer();
                     }});
                 }}
             """)
 
-            logger.debug(f"Chat state: loading={state.get('loading')}, confirmation={state.get('confirmation')}, errorDialog={state.get('errorDialog')}, timeout={state.get('timeout')}, toolLoading={state.get('toolLoading')}")
+            logger.debug(f"Chat state: loading={state.get('loading')}, confirmation={state.get('confirmation')}, errorOverlay={state.get('errorOverlay')}, chatError={state.get('chatError')}, timeout={state.get('timeout')}, toolLoading={state.get('toolLoading')}")
+
 
             if state.get("timeout"):
                 logger.error("Timed out waiting for chat to progress (loading end or confirmation/error).")
@@ -803,7 +808,7 @@ class AutoVSCodeCopilot:
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         
-        chat_try_locator = self.page.locator(Constants.SELECTOR_CHAT_ERROR).filter(visible=True).click()
+        await self.page.locator(Constants.SELECTOR_CHAT_ERROR).filter(visible=True).click()
         await asyncio.sleep(Constants.WAIT_AFTER_CLICK)
 
     async def _dismiss_error_overlay(self):
