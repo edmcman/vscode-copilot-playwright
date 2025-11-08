@@ -51,6 +51,7 @@ class Constants:
     TYPING_DELAY = 10
     TERMINATE_TIMEOUT = 2  # seconds
     STABILITY_CHECK_COUNT = 3  # Number of consecutive stable checks required
+    STABILITY_CHECK_SLEEP_MS = 50  # Milliseconds to wait between stability checks
 
     WAIT_AFTER_CLICK = 0.1
 
@@ -631,7 +632,14 @@ class AutoVSCodeCopilot:
             state = await self._evaluate_with_retry(f"""
                 async () => {{
                     // Pure functional helpers for selector checks
-                    const isLoading = () => !!document.querySelector('{Constants.SELECTOR_CHAT_RESPONSE_LOADING}');
+                    // Consider the chat 'loading' if the loading indicator is present
+                    // AND the send button is not visible (send button hidden implies response still being produced).
+                    const isLoading = () => {{
+                        const loading = !!document.querySelector('{Constants.SELECTOR_CHAT_RESPONSE_LOADING}');
+                        const sendBtn = document.querySelector('{Constants.SELECTOR_SEND_BUTTON}');
+                        const sendVisible = !!(sendBtn && sendBtn.offsetParent !== null);
+                        return loading && !sendVisible;
+                    }};
                     const isConfirmation = () => !!Array.from(document.querySelectorAll('{Constants.SELECTOR_CONTINUE_BUTTON}, {Constants.SELECTOR_CONTINUE_ITERATING_BUTTON}'))
                         .filter(el => el.offsetParent !== null)
                         .find(el => {Constants.CONTINUE_BUTTON_TEXT}.includes(el.textContent.trim()));
@@ -660,7 +668,7 @@ class AutoVSCodeCopilot:
                             stableCount++;
                             
                             // Brief sleep to prevent rapid polling during stabilization
-                            await new Promise(resolve => setTimeout(resolve, 50));
+                            await new Promise(resolve => setTimeout(resolve, {Constants.STABILITY_CHECK_SLEEP_MS}));
                             
                             // Require {Constants.STABILITY_CHECK_COUNT} consecutive stable checks to prevent flicker
                             if (stableCount >= {Constants.STABILITY_CHECK_COUNT}) {{
