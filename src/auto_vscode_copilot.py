@@ -818,8 +818,9 @@ class AutoVSCodeCopilot:
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         
-        await self.page.locator(Constants.SELECTOR_CHAT_ERROR).filter(visible=True).click()
-        await asyncio.sleep(Constants.WAIT_AFTER_CLICK)
+        try_again_locator = self.page.locator(Constants.SELECTOR_CHAT_ERROR).filter(visible=True)
+        await try_again_locator.click()
+        await try_again_locator.wait_for(state='hidden', timeout=Constants.TIMEOUT_SEND_BUTTON_HIDDEN)
 
     async def _dismiss_error_overlay(self):
         """Dismiss any visible error overlays (notifications toasts) and log their messages."""
