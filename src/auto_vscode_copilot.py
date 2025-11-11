@@ -70,8 +70,7 @@ class Constants:
     SELECTOR_CHAT_ERROR = 'div.interactive-response.chat-most-recent-response div.chat-error-confirmation a.monaco-text-button'
     SELECTOR_TOOL_LOADING = 'div.interactive-response div.chat-tool-invocation-part div.codicon-loading'
     CONTINUE_BUTTON_TEXT = ["Allow", "Continue"]
-
-    # JavaScript selectors (for evaluation)
+    STUCK_MESSAGE = "Your command seems to have gotten stuck for a while..."
     JS_SELECTORS = {
         'INTERACTIVE_SESSION': 'div.interactive-session > div.interactive-list',
         'MONACO_LIST_ROWS': 'div.monaco-list[aria-label="Chat"] > div.monaco-scrollable-element > div.monaco-list-rows > div.monaco-list-row',
@@ -757,12 +756,17 @@ class AutoVSCodeCopilot:
                 # New: Check for tool loading on timeout
                 if state.get("toolLoading"):
                     logger.warning("Tool loading detected on timeout, attempting to recover by clicking cancel...")
+
+                    # Click cancel button
                     cancel_locator = self.page.get_by_role(
                         role=Constants.SELECTOR_CANCEL_BUTTON_ROLE[0],
                         name=Constants.SELECTOR_CANCEL_BUTTON_ROLE[1],
                         exact=Constants.SELECTOR_CANCEL_BUTTON_ROLE[2]
                     ).filter(has=self.page.locator('.codicon-stop-circle'))
                     await cancel_locator.click(timeout=0)
+
+                    # Send message to user
+                    await self.send_chat_message(Constants.STUCK_MESSAGE)
 
                     continue  # Re-check state after handling
                 else:
