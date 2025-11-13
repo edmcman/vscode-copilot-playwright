@@ -487,19 +487,19 @@ class AutoVSCodeCopilot:
 
                     if (user) {{
                         const rendered_markdown = Array.from(user.querySelectorAll(SELECTORS.RENDERED_MARKDOWN)).map(el => ({{
-                            text: el.textContent || '',
+                            text: el.innerText || '',
                             html: el.innerHTML || ''
                         }}));
                         return {{ type: 'user', rowId, rendered_markdown }};
                     }} else if (resp) {{
                         const parts = Array.from(resp.querySelectorAll(SELECTORS.CHAT_PARTS)).map(el => {{
                             if (el.classList.contains('rendered-markdown')) {{
-                                return {{ type: 'rendered-markdown', text: el.textContent || '', html: el.innerHTML || '' }};
+                                return {{ type: 'rendered-markdown', text: el.innerText || '', html: el.innerHTML || '' }};
                             }} else if (el.classList.contains('chat-confirmation-widget')) {{
                                 const title = el.querySelector(SELECTORS.CONFIRMATION_TITLE);
-                                return {{ type: 'confirmation', text: title?.textContent || '', html: title?.innerHTML || el.innerHTML || '' }};
+                                return {{ type: 'confirmation', text: title?.innerText || '', html: title?.innerHTML || el.innerHTML || '' }};
                             }} else {{
-                                return {{ type: 'tool', text: el.textContent || '', html: el.innerHTML || '' }};
+                                return {{ type: 'tool', text: el.innerText || '', html: el.innerHTML || '' }};
                             }}
                         }});
                         return {{ type: 'assistant', rowId, parts }};
@@ -657,13 +657,13 @@ class AutoVSCodeCopilot:
                     }};
                     const isConfirmation = () => !!Array.from(document.querySelectorAll('{Constants.SELECTOR_CONTINUE_BUTTON}, {Constants.SELECTOR_CONTINUE_ITERATING_BUTTON}'))
                         .filter(el => el.offsetParent !== null)
-                        .find(el => {Constants.CONTINUE_BUTTON_TEXT}.includes(el.textContent.trim()));
+                        .find(el => {Constants.CONTINUE_BUTTON_TEXT}.includes(el.innerText.trim()));
                     const isErrorOverlay = () => !!document.querySelector('{Constants.SELECTOR_ERROR_OVERLAY}');
                     const isChatError = () => {{
                         const nodes = Array.from(document.querySelectorAll('{Constants.SELECTOR_CHAT_ERROR}'));
                         //console.log(`Found ${{nodes.length}} chat error nodes`);
-                        nodes.forEach(btn => console.log(`  Chat error button text: '${{btn.textContent.trim()}}' visible=${{btn.offsetParent !== null}}`));
-                        return nodes.some(el => el.offsetParent !== null && el.textContent.trim() === 'Try Again');
+                        nodes.forEach(btn => console.log(`  Chat error button text: '${{btn.innerText.trim()}}' visible=${{btn.offsetParent !== null}}`));
+                        return nodes.some(el => el.offsetParent !== null && el.innerText.trim() === 'Try Again');
                     }};
                     const isToolLoading = () => !!document.querySelector('{Constants.SELECTOR_TOOL_LOADING}');
 
