@@ -756,7 +756,7 @@ class AutoVSCodeCopilot:
 
             if state.get("timeout"):
                 logger.error("Timed out waiting for chat to progress (loading end or confirmation/error).")
-                # New: Check for tool loading on timeout
+                # Check for tool loading on timeout
                 if state.get("toolLoading"):
                     logger.warning("Tool loading detected on timeout, attempting to recover by clicking cancel...")
 
