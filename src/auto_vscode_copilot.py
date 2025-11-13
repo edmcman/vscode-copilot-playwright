@@ -646,13 +646,13 @@ class AutoVSCodeCopilot:
             
             state = await self._evaluate_with_retry(f"""
                 async () => {{
-                    // Pure functional helpers for selector checks
                     // Consider the chat 'loading' if the loading indicator is present
                     // OR the send button is not visible (send button hidden implies response still being produced).
                     const isLoading = () => {{
                         const loading = !!document.querySelector('{Constants.SELECTOR_CHAT_RESPONSE_LOADING}');
                         const sendBtn = document.querySelector('{Constants.SELECTOR_SEND_BUTTON}');
-                        const sendVisible = !!(sendBtn && sendBtn.offsetParent !== null);
+                        const sendVisible = (!!sendBtn && sendBtn.offsetParent !== null);
+                        // console.log(`Loading indicator present: ${{loading}}, send button ${{!!sendBtn}}, send button visible: ${{sendVisible}}`);
                         return loading || !sendVisible;
                     }};
                     const isConfirmation = () => !!Array.from(document.querySelectorAll('{Constants.SELECTOR_CONTINUE_BUTTON}, {Constants.SELECTOR_CONTINUE_ITERATING_BUTTON}'))
