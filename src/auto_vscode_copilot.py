@@ -422,7 +422,7 @@ class AutoVSCodeCopilot:
         md_text_buf = []
         md_html_buf = []
         
-        def flush_markdown():
+        def parse_accumulated_markdown():
             if md_text_buf or md_html_buf:
                 text = '\n\n'.join(md_text_buf).strip()
                 html = '\n\n'.join(md_html_buf).strip()
@@ -432,19 +432,35 @@ class AutoVSCodeCopilot:
                 md_html_buf.clear()
 
         for part in element_data.get('parts', []):
-            if part['type'] == 'rendered-markdown':
-                if part['text'].strip():
-                    md_text_buf.append(part['text'].strip())
-                if part['html'].strip():
-                    md_html_buf.append(part['html'])
-            elif part['type'] == 'confirmation':
-                flush_markdown()
-                messages.append({'entity': 'confirmation', 'message': part['text'], 'text': part['text'], 'html': part['html'], 'rowId': element_data['rowId']})
-            elif part['type'] == 'tool':
-                flush_markdown()
-                messages.append({'entity': 'tool', 'message': part['text'], 'text': part['text'], 'html': part['html'], 'rowId': element_data['rowId']})
+            # Parts always include 'text' and 'html' — match on the mapping
+            match part:
+                case {'type': 'rendered-markdown', 'text': text, 'html': html}:
+                    if text.strip():
+                        md_text_buf.append(text.strip())
+                    if html.strip():
+                        md_html_buf.append(html)
+                case {'type': 'confirmation', 'text': text, 'html': html}:
+                    parse_accumulated_markdown()
+                    messages.append({
+                        'entity': 'confirmation',
+                        'message': text,
+                        'text': text,
+                        'html': html,
+                        'rowId': element_data['rowId']
+                    })
+                case {'type': 'tool', 'text': text, 'html': html} if text.strip() != "":
+                    parse_accumulated_markdown()
+                    messages.append({
+                        'entity': 'tool',
+                        'message': text,
+                        'text': text,
+                        'html': html,
+                        'rowId': element_data['rowId']
+                    })
+                case _:
+                    pass
         
-        flush_markdown()
+        parse_accumulated_markdown()
         return messages
 
     async def _collect_visible_row_data(self):
