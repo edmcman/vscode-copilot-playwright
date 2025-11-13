@@ -669,7 +669,6 @@ class AutoVSCodeCopilot:
 
                     let currentToolLoading = isToolLoading();
                     let currentTimeout = currentToolLoading ? {Constants.TIMEOUT_TOOL_LOADING} : {Constants.TIMEOUT_SAFETY};
-                    let stableCount = 0;
 
                     const checkAsync = async () => {{
                         //console.log('Checking chat state: loading, confirmation, errorDialog, toolLoading...');
@@ -678,24 +677,12 @@ class AutoVSCodeCopilot:
                         const errorOverlay = isErrorOverlay();
                         const chatError = isChatError();
                         
-                        // Stabilize loading state - require consistent non-loading state
+                        // If there's no loading, confirmation, or error state, consider chat ready
                         if (!loading && !confirmation && !errorOverlay && !chatError) {{
-                            stableCount++;
-                            
-                            // Brief sleep to prevent rapid polling during stabilization
-                            await new Promise(resolve => setTimeout(resolve, {Constants.STABILITY_CHECK_SLEEP_MS}));
-                            
-                            // Require {Constants.STABILITY_CHECK_COUNT} consecutive stable checks to prevent flicker
-                            if (stableCount >= {Constants.STABILITY_CHECK_COUNT}) {{
-                                console.log('Chat state determined (stable)');
-                                return {{ loading: false, confirmation, errorOverlay, chatError, timeout: false, toolLoading: currentToolLoading }};
-                            }}
-                            console.log(`Chat state stabilizing... (${{stableCount}}/{Constants.STABILITY_CHECK_COUNT})`);
-                            return null;
+                            // Return immediately when chat is observed to be idle/no dialogs —
+                            // removing the previous multi-observation "stabilization" logic.
+                            return {{ loading: false, confirmation, errorOverlay, chatError, timeout: false, toolLoading: currentToolLoading }};
                         }}
-                        
-                        // Reset stability counter on any active state
-                        stableCount = 0;
                         
                         if (confirmation || errorOverlay || chatError) {{
                             console.log('Chat state determined');
