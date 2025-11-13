@@ -36,7 +36,7 @@ class Constants:
     TIMEOUT_REFOCUS = 20000
     TIMEOUT_PICKER_LOCATOR = 60000
     TIMEOUT_CONTEXT_LOCATOR = 10000
-    TIMEOUT_OPTION_LOCATOR_VISIBLE = 100
+    TIMEOUT_OPTION_LOCATOR_VISIBLE = 1000
     TIMEOUT_OPTION_CLICK = 1000
     # Some models can be really *slow*.  VS Code seems like it has an internal
     # timeout of 10 minutes before it displays the "Try Again" button.  So we
