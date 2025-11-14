@@ -68,9 +68,9 @@ class Constants:
     SELECTOR_ERROR_OVERLAY = 'div.notifications-toasts.visible div.notification-list-item'
     # Selector for the "Try Again" chat error button inside the most recent response
     SELECTOR_CHAT_ERROR = 'div.interactive-response.chat-most-recent-response div.chat-error-confirmation a.monaco-text-button'
-    SELECTOR_TOOL_LOADING = 'div.interactive-response div.chat-tool-invocation-part div.codicon-loading'
+    SELECTOR_TERMINAL_CMD_LOADING = 'div.interactive-response div.chat-tool-invocation-part:has(.codicon-loading):has(.codicon-terminal)'
     CONTINUE_BUTTON_TEXT = ["Allow", "Continue"]
-    STUCK_MESSAGE = f"Your command took longer than {TIMEOUT_TOOL_LOADING/1000} seconds so I stopped it"
+    STUCK_MESSAGE = f"Your command took longer than {TIMEOUT_TOOL_LOADING/1000} seconds so I stopped it. I can't interact with terminal commands."
     JS_SELECTORS = {
         'INTERACTIVE_SESSION': 'div.interactive-session > div.interactive-list',
         'MONACO_LIST_ROWS': 'div.monaco-list[aria-label="Chat"] > div.monaco-scrollable-element > div.monaco-list-rows > div.monaco-list-row',
@@ -665,7 +665,7 @@ class AutoVSCodeCopilot:
                         nodes.forEach(btn => console.log(`  Chat error button text: '${{btn.innerText.trim()}}' visible=${{btn.offsetParent !== null}}`));
                         return nodes.some(el => el.offsetParent !== null && el.innerText.trim() === 'Try Again');
                     }};
-                    const isToolLoading = () => !!document.querySelector('{Constants.SELECTOR_TOOL_LOADING}');
+                    const isToolLoading = () => !!document.querySelector('{Constants.SELECTOR_TERMINAL_CMD_LOADING}');
 
                     let currentToolLoading = isToolLoading();
                     let currentTimeout = currentToolLoading ? {Constants.TIMEOUT_TOOL_LOADING} : {Constants.TIMEOUT_SAFETY};
