@@ -864,6 +864,13 @@ class AutoVSCodeCopilot:
         picker_locator = self.page.locator(f'a.action-label[aria-label*="{picker_aria_label}"]')
         # Sometimes it takes a while to load the models
         await picker_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_PICKER_LOCATOR)
+        
+        # Check if the option is already selected
+        current_selection = await picker_locator.inner_text()
+        if current_selection == option_label:
+            logger.debug(f"{picker_aria_label} already set to '{option_label}', skipping selection")
+            return
+        
         await picker_locator.click()
         context_locator = self.page.locator('div.context-view div.monaco-list')
         await context_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_CONTEXT_LOCATOR)
