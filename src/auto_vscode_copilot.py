@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 import subprocess
 import logging
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError, Error as PlaywrightError
+from playwright.async_api import async_playwright, expect, TimeoutError as PlaywrightTimeoutError, Error as PlaywrightError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 logging.basicConfig(
@@ -23,7 +23,9 @@ class Constants:
     PORT_MAX = 9300
 
     # Timeouts (in milliseconds)
-    TIMEOUT_LONG = 60000
+    TIMEOUT_LONG = 60_000
+    TIMEOUT_MID = 10_000
+    TIMEOUT_SHORT = 1_000
     TIMEOUT_VSCODE_START_ITERATIONS = 30
     TIMEOUT_VSCODE_START_SLEEP = 1  # seconds
     TIMEOUT_WORKBENCH = 30000
@@ -57,7 +59,7 @@ class Constants:
 
     # Selectors
     SELECTOR_WORKBENCH = '.monaco-workbench'
-    SELECTOR_CHAT_INPUT_CONTAINER = 'div.chat-input-container'
+    SELECTOR_CHAT_INPUT_CONTAINER = 'div.chat-input-container div.interactive-input-editor'
     SELECTOR_SEND_BUTTON = 'a.action-label.codicon.codicon-send'
     SELECTOR_INTERACTIVE_SESSION = 'div.interactive-session'
     SELECTOR_CHAT_RESPONSE_LOADING = 'div.chat-response-loading'
@@ -71,6 +73,7 @@ class Constants:
     SELECTOR_TERMINAL_CMD_LOADING = 'div.interactive-response div.chat-tool-invocation-part:has(.codicon-loading):has(.codicon-terminal)'
     CONTINUE_BUTTON_TEXT = ["Allow", "Continue"]
     STUCK_MESSAGE = f"Your command took longer than {TIMEOUT_TOOL_LOADING/1000} seconds so I stopped it. I can't interact with terminal commands."
+    REMOTE_OPENING_TEXT = "Opening Remote..."
     JS_SELECTORS = {
         'INTERACTIVE_SESSION': 'div.interactive-session > div.interactive-list',
         'MONACO_LIST_ROWS': 'div.monaco-list[aria-label="Chat"] > div.monaco-scrollable-element > div.monaco-list-rows > div.monaco-list-row',
@@ -267,16 +270,28 @@ class AutoVSCodeCopilot:
     async def _show_copilot_chat_helper(self):
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
-        logger.debug('Opening Copilot chat window using keyboard shortcut...')
-        try:
-            await self.page.keyboard.press('Control+Alt+i')
-            chat_locator = self.page.locator(Constants.SELECTOR_INTERACTIVE_SESSION)
-            logger.debug('Verifying Copilot chat window presence...')
-            await chat_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_LONG)
-            logger.info('✅ Copilot chat window successfully opened and verified!')
-            return True
-        except PlaywrightTimeoutError:
-            raise RuntimeError(f"Failed to open Copilot chat: Selector '{Constants.SELECTOR_INTERACTIVE_SESSION}' not found. This might indicate Copilot is not available or the interface has changed.")
+        
+        remote = self.page.locator('div#status\.host')
+        await expect(remote).not_to_contain_text(Constants.REMOTE_OPENING_TEXT, timeout=Constants.TIMEOUT_LONG)
+        logger.debug(f'opening remote alert not present now: {await remote.text_content()}')
+
+        # Check if chat window is already visible
+        input_locator = self.page.locator(Constants.SELECTOR_CHAT_INPUT_CONTAINER)
+        is_visible = await input_locator.is_visible()
+        if is_visible:
+            logger.debug('Copilot chat window is already visible')
+
+        for _ in range(3):
+            try:
+                logger.debug('Opening Copilot chat window using keyboard shortcut...')
+                await self.page.keyboard.press('Control+Alt+i')
+                logger.debug('Verifying Copilot chat window presence...')
+                await input_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_MID)
+                return
+            except PlaywrightTimeoutError:
+                pass
+
+        raise RuntimeError('Failed to open Copilot chat window.')
 
     async def _write_chat_message_helper(self, message):
         if not self.page:
@@ -788,7 +803,8 @@ class AutoVSCodeCopilot:
                     case buttons:
                         texts = [await button.inner_text() for button in buttons]
                         logger.warning(f"Multiple confirmation buttons found: {', '.join(texts)}")
-                        raise RuntimeError("Multiple confirmation buttons found.")
+                        for button in reversed(buttons):
+                            await button.click()
                 # Wait a bit for the chat to process the confirmation
                 await asyncio.sleep(Constants.WAIT_AFTER_CLICK)
                 continue  # Re-check state after handling
@@ -885,4 +901,4 @@ class AutoVSCodeCopilot:
         await self.pick_copilot_picker_helper('Pick Model', model_label)
 
     async def pick_copilot_mode_helper(self, mode_label=None):
-        await self.pick_copilot_picker_helper('Set Mode', mode_label)
+        await self.pick_copilot_picker_helper('Set Agent', mode_label)
