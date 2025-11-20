@@ -71,7 +71,7 @@ class Constants:
     # Selector for the "Try Again" chat error button inside the most recent response
     SELECTOR_CHAT_ERROR = 'div.interactive-response.chat-most-recent-response div.chat-error-confirmation a.monaco-text-button'
     SELECTOR_TERMINAL_CMD_LOADING = 'div.interactive-response div.chat-tool-invocation-part:has(.codicon-loading):has(.codicon-terminal)'
-    CONTINUE_BUTTON_TEXT = ["Allow", "Continue"]
+    CONTINUE_BUTTON_TEXT = ["Allow", "Continue", "Allow and Review"]
     STUCK_MESSAGE = f"Your command took longer than {TIMEOUT_TOOL_LOADING/1000} seconds so I stopped it. I can't interact with terminal commands."
     REMOTE_OPENING_TEXT = "Opening Remote..."
     JS_SELECTORS = {
