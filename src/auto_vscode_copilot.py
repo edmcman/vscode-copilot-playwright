@@ -643,6 +643,24 @@ class AutoVSCodeCopilot:
         
         return all_messages
 
+    async def _click_confirmation_buttons_recursively(self, first_invocation=True):
+        """Recursively click confirmation buttons until none remain."""
+        assert self.page is not None, "VS Code not launched. Call launch() first."
+        buttons = await self.page.locator(f"{Constants.SELECTOR_CONTINUE_BUTTON}, {Constants.SELECTOR_CONTINUE_ITERATING_BUTTON}").filter(visible=True).all()
+        valid_buttons = [b for b in buttons if await b.inner_text() in Constants.CONTINUE_BUTTON_TEXT]
+
+        if not valid_buttons:
+            if first_invocation:
+                logger.warning("No visible confirmation buttons found.")
+                raise RuntimeError("No visible confirmation buttons found.")
+            return
+
+        logger.debug(f"Clicking confirmation button with text: '{await valid_buttons[-1].inner_text()}'")
+        await valid_buttons[-1].click()
+        await asyncio.sleep(Constants.WAIT_AFTER_CLICK)
+        
+        await self._click_confirmation_buttons_recursively(first_invocation=False)
+
     async def extract_all_chat_messages(self):
         """
         Extract all chat messages, handling confirmation and loading in a loop until complete.
@@ -768,6 +786,13 @@ class AutoVSCodeCopilot:
 
             logger.debug(f"Chat state: loading={state.get('loading')}, confirmation={state.get('confirmation')}, errorOverlay={state.get('errorOverlay')}, chatError={state.get('chatError')}, timeout={state.get('timeout')}, toolLoading={state.get('toolLoading')}")
 
+            loading = await self.page.locator(Constants.SELECTOR_CHAT_RESPONSE_LOADING).all()
+            logger.debug(f"Loading indicators found: {len(loading)}")
+
+            send_button_visible = await self.page.locator(Constants.SELECTOR_SEND_BUTTON).is_visible()
+            logger.debug(f"Send button visible: {send_button_visible}")
+            if not state['loading'] and not send_button_visible:
+                logger.debug("Send button not visible after loading (bad)")
 
             if state.get("timeout"):
                 logger.error("Timed out waiting for chat to progress (loading end or confirmation/error).")
@@ -792,21 +817,7 @@ class AutoVSCodeCopilot:
 
             if state.get("confirmation"):
                 logger.debug("Confirmation prompt detected, clicking Continue...")
-                continue_buttons = await self.page.locator(f"{Constants.SELECTOR_CONTINUE_BUTTON}, {Constants.SELECTOR_CONTINUE_ITERATING_BUTTON}").filter(visible=True).all()
-                match [button for button in continue_buttons if await button.inner_text() in Constants.CONTINUE_BUTTON_TEXT]:
-                    case [button]:
-                        logger.debug(f"Clicking confirmation button with text: '{await button.inner_text()}'")
-                        await button.click()
-                    case []:
-                        logger.warning("No visible confirmation buttons found.")
-                        raise RuntimeError("No visible confirmation buttons found.")
-                    case buttons:
-                        texts = [await button.inner_text() for button in buttons]
-                        logger.warning(f"Multiple confirmation buttons found: {', '.join(texts)}")
-                        for button in reversed(buttons):
-                            await button.click()
-                # Wait a bit for the chat to process the confirmation
-                await asyncio.sleep(Constants.WAIT_AFTER_CLICK)
+                await self._click_confirmation_buttons_recursively()
                 continue  # Re-check state after handling
 
             if state.get("chatError"):
@@ -822,6 +833,16 @@ class AutoVSCodeCopilot:
             # Reached here: loading has ended, no confirmation or error dialog
             logger.debug("Chat loading complete, no confirmation or error needed. Starting message extraction...")
             break
+
+        # Sanity check: Make sure that the send button is visible again
+        try:
+            await self.page.locator(Constants.SELECTOR_SEND_BUTTON).wait_for(state='visible', timeout=10000)
+        except PlaywrightTimeoutError:
+            logger.warning("Send button not visible???")
+            await self.take_screenshot("/tmp/send-button-not-visible.png")
+            import pdb
+            pdb.set_trace()
+            raise RuntimeError("Send button not visible")
 
         # Final extraction
         logger.debug("Calling _extract_chat_messages_helper for final extraction...")
