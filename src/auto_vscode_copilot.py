@@ -165,6 +165,7 @@ class AutoVSCodeCopilot:
         self.user_data_dir = Path(__file__).parent.parent / Constants.USER_DATA_DIR_REL
         self.playwright = None
         self.trace_file = trace_file
+        self.copilot_chat_installed = asyncio.Event()
         # Try ports from Constants.PORT_START up to Constants.PORT_MAX, check with socket before launching
         port = Constants.PORT_START
         max_port = Constants.PORT_MAX
@@ -245,7 +246,18 @@ class AutoVSCodeCopilot:
         if not pages:
             raise RuntimeError("No VS Code pages found")
         self.page = pages[0]
-        # Add browser console log handler for debugging page.evaluate only if debug level
+        page = self.page  # Local reference for closure
+        # Add temporary handler for Copilot Chat extension installation detection
+        def handle_copilot_install(msg):
+            msg_text = msg.text
+            if "Successfully installed 'github.copilot-chat' extension" in msg_text:
+                logger.info("Detected Copilot Chat extension installation")
+                self.copilot_chat_installed.set()
+                # Remove this handler once the event is detected
+                page.remove_listener("console", handle_copilot_install)
+        page.on("console", handle_copilot_install)
+        
+        # Add browser console log handler for debugging (if enabled)
         if logger.isEnabledFor(logging.DEBUG):
             def handle_console_msg(msg):
                 logger.debug(f"[Browser Console][{msg.type}] {msg.text}")
@@ -277,9 +289,14 @@ class AutoVSCodeCopilot:
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         
-        remote = self.page.locator('div#status\.host')
+        remote = self.page.locator(r'div#status\.host')
         await expect(remote).not_to_contain_text(Constants.REMOTE_OPENING_TEXT, timeout=Constants.TIMEOUT_LONG)
         logger.debug(f'opening remote alert not present now: {await remote.text_content()}')
+
+        # Wait for Copilot Chat extension to be installed (important for devcontainer scenarios)
+        logger.debug('Waiting for Copilot Chat extension to be installed...')
+        await asyncio.wait_for(self.copilot_chat_installed.wait(), timeout=Constants.TIMEOUT_LONG / 1000)
+        logger.debug('Copilot Chat extension is installed')
 
         # Check if chat window is already visible
         input_locator = self.page.locator(Constants.SELECTOR_CHAT_INPUT_CONTAINER)
@@ -310,6 +327,7 @@ class AutoVSCodeCopilot:
         logger.debug(f"Focusing on {input_locator}")
         await input_locator.click()
         for c in message:
+            await input_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_INPUT_LOCATOR)
             if c == '\n':
                 await self.page.keyboard.press('Shift+Enter')
             else:
