@@ -6,7 +6,8 @@ import time
 from pathlib import Path
 import subprocess
 import logging
-from playwright.async_api import async_playwright, expect, TimeoutError as PlaywrightTimeoutError, Error as PlaywrightError
+from typing import Optional, Set, List
+from playwright.async_api import async_playwright, expect, TimeoutError as PlaywrightTimeoutError, Error as PlaywrightError, Browser, BrowserContext, Page, Playwright
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 logging.basicConfig(
@@ -117,16 +118,19 @@ def _log_retry_before_sleep(retry_state):
         logger.warning(f"Evaluation failed (attempt {attempt}/{max_attempts}), retrying...")
 
 class AutoVSCodeCopilot:
+    browser: Optional[Browser]
+    context: Optional[BrowserContext]
+    page: Optional[Page]
+    vscode_process: Optional[subprocess.Popen]
+    vscode_port: Optional[int]
+    user_data_dir: Path
+    playwright: Optional[Playwright]
+    trace_file: Optional[str]
+    previously_seen_row_ids: Set[int]
+    previously_extracted_messages: List
+    copilot_chat_installed: asyncio.Event
+    
     def __init__(self, *args, **kwargs):
-        # for mypy
-        self.browser = None
-        self.context = None
-        self.page = None
-        self.vscode_process = None
-        self.vscode_port = None
-        self.user_data_dir = None
-        self.playwright = None
-        self.trace_file = None
         raise RuntimeError(
             "Direct instantiation is not supported. "
             "Use 'await AutoVSCodeCopilot.create(...)' instead."
@@ -221,6 +225,8 @@ class AutoVSCodeCopilot:
             except Exception:
                 pass
             time.sleep(Constants.TIMEOUT_VSCODE_START_SLEEP)
+        assert self.vscode_process is not None, "vscode_process should be set"
+        assert self.vscode_process.stdout is not None and self.vscode_process.stderr is not None
         logger.warning(f"VS Code failed to start.\nstdout:{self.vscode_process.stdout.read().decode()}\nstderr:{self.vscode_process.stderr.read().decode()}")
         raise RuntimeError(f"VS Code failed to start or debugging port {self.vscode_port} is not accessible.")
 
