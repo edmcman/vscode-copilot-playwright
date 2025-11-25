@@ -72,6 +72,7 @@ class Constants:
     # Selector for the "Try Again" chat error button inside the most recent response
     SELECTOR_CHAT_ERROR = 'div.interactive-response.chat-most-recent-response div.chat-error-confirmation a.monaco-text-button'
     SELECTOR_TERMINAL_CMD_LOADING = 'div.interactive-response div.chat-tool-invocation-part:has(.codicon-loading):has(.codicon-terminal)'
+    SELECTOR_STOP_CIRCLE = '.codicon-stop-circle'
     CONTINUE_BUTTON_TEXT = ["Allow", "Continue", "Allow and Review"]
     STUCK_MESSAGE = f"Your command took longer than {TIMEOUT_TOOL_LOADING/1000} seconds so I stopped it. I can't interact with terminal commands."
     REMOTE_OPENING_TEXT = "Opening Remote..."
@@ -912,7 +913,7 @@ class AutoVSCodeCopilot:
                         role=Constants.SELECTOR_CANCEL_BUTTON_ROLE[0],
                         name=Constants.SELECTOR_CANCEL_BUTTON_ROLE[1],
                         exact=Constants.SELECTOR_CANCEL_BUTTON_ROLE[2]
-                    ).filter(has=self.page.locator('.codicon-stop-circle'))
+                    ).and_(self.page.locator(Constants.SELECTOR_STOP_CIRCLE))
                     await cancel_locator.click(timeout=0)
 
                     # Send message to user
@@ -1104,7 +1105,7 @@ class AutoVSCodeCopilot:
                         role=Constants.SELECTOR_CANCEL_BUTTON_ROLE[0],
                         name=Constants.SELECTOR_CANCEL_BUTTON_ROLE[1],
                         exact=Constants.SELECTOR_CANCEL_BUTTON_ROLE[2]
-                    ).filter(has=self.page.locator('.codicon-stop-circle'))
+                    ).and_(self.page.locator(Constants.SELECTOR_STOP_CIRCLE))
                     await cancel_locator.click(timeout=Constants.TIMEOUT_SHORT)
 
                     # Send message to user
