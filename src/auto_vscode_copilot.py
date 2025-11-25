@@ -295,8 +295,12 @@ class AutoVSCodeCopilot:
 
         # Wait for Copilot Chat extension to be installed (important for devcontainer scenarios)
         logger.debug('Waiting for Copilot Chat extension to be installed...')
-        await asyncio.wait_for(self.copilot_chat_installed.wait(), timeout=Constants.TIMEOUT_LONG / 1000)
-        logger.debug('Copilot Chat extension is installed')
+        try:
+            await asyncio.wait_for(self.copilot_chat_installed.wait(), timeout=Constants.TIMEOUT_MID / 1000)
+            logger.debug('Copilot Chat extension is installed')
+        except TimeoutError:
+            # Ed doesn't know why, but sometimes we just don't see these events.
+            logger.debug('Timeout waiting for Copilot Chat extension installation event. Continuing anyway...')
 
         # Check if chat window is already visible
         input_locator = self.page.locator(Constants.SELECTOR_CHAT_INPUT_CONTAINER)
