@@ -165,6 +165,8 @@ class AutoVSCodeCopilot:
         self.user_data_dir = Path(__file__).parent.parent / Constants.USER_DATA_DIR_REL
         self.playwright = None
         self.trace_file = trace_file
+        self.previously_seen_row_ids = set()
+        self.previously_extracted_messages = []
         self.copilot_chat_installed = asyncio.Event()
         # Try ports from Constants.PORT_START up to Constants.PORT_MAX, check with socket before launching
         port = Constants.PORT_START
@@ -554,8 +556,20 @@ class AutoVSCodeCopilot:
         """
         return await self._evaluate_with_retry(script)
 
-    async def _scroll_to_top(self):
-        """Scroll chat to top"""
+    async def _scroll_to_edge(self, direction: str):
+        """Scroll chat to top or bottom
+        
+        Args:
+            direction: Either 'top' or 'bottom'
+        """
+        key_config = {
+            'top': ('Home', 'Home', 36),
+            'bottom': ('End', 'End', 35)
+        }
+        if direction not in key_config:
+            raise ValueError(f"direction must be 'top' or 'bottom', got '{direction}'")
+        
+        key, code, keyCode = key_config[direction]
         script = f"""
             async () => {{
                 const listContainer = document.querySelector('div.monaco-list[aria-label="Chat"]');
@@ -563,18 +577,41 @@ class AutoVSCodeCopilot:
                     listContainer.focus();
                     await new Promise(resolve => setTimeout(resolve, {Constants.TIMEOUT_SCROLL}));
                     listContainer.dispatchEvent(new KeyboardEvent('keydown', {{
-                        key: 'Home', code: 'Home', keyCode: 36, which: 36,
+                        key: '{key}', code: '{code}', keyCode: {keyCode}, which: {keyCode},
                         bubbles: true, cancelable: true
                     }}));
                 }} else {{
-                    console.log('No chat list container found for scrolling to top');
+                    console.log('No chat list container found for scrolling to {direction}');
                 }}
             }}
         """
         await self._evaluate_with_retry(script)
 
-    async def _scroll_down_one(self):
-        """Scroll down one item, return True if focus changed"""
+    async def _scroll_to_top(self):
+        """Scroll chat to top"""
+        await self._scroll_to_edge('top')
+
+    async def _scroll_to_bottom(self):
+        """Scroll chat to bottom"""
+        await self._scroll_to_edge('bottom')
+
+    async def _scroll_one(self, direction: str) -> bool:
+        """Scroll one item up or down, return True if focus changed
+        
+        Args:
+            direction: Either 'up' or 'down'
+            
+        Returns:
+            True if focus changed, False otherwise
+        """
+        key_config = {
+            'up': ('ArrowUp', 'ArrowUp', 38),
+            'down': ('ArrowDown', 'ArrowDown', 40)
+        }
+        if direction not in key_config:
+            raise ValueError(f"direction must be 'up' or 'down', got '{direction}'")
+        
+        key, code, keyCode = key_config[direction]
         script = f"""
             () => {{
                 const session = document.querySelector('{Constants.SELECTOR_INTERACTIVE_SESSION}');
@@ -586,7 +623,7 @@ class AutoVSCodeCopilot:
                 if (listContainer) {{
                     listContainer.focus();
                     listContainer.dispatchEvent(new KeyboardEvent('keydown', {{
-                        key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, which: 40,
+                        key: '{key}', code: '{code}', keyCode: {keyCode}, which: {keyCode},
                         bubbles: true, cancelable: true
                     }}));
                     
@@ -594,7 +631,7 @@ class AutoVSCodeCopilot:
                     return new Promise(resolve => {{
                         setTimeout(() => {{
                             const afterFocus = session.querySelector('div.focused')?.getAttribute('data-index');
-                            console.log(`Scrolled down from ${{beforeFocus}} to ${{afterFocus}}`);
+                            console.log(`Scrolled {direction} from ${{beforeFocus}} to ${{afterFocus}}`);
                             resolve(beforeFocus !== afterFocus);
                         }}, {Constants.TIMEOUT_SCROLL_DOWN});
                     }});
@@ -604,22 +641,46 @@ class AutoVSCodeCopilot:
         """
         return await self._evaluate_with_retry(script)
 
+    async def _scroll_down_one(self):
+        """Scroll down one item, return True if focus changed"""
+        return await self._scroll_one('down')
+
+    async def _scroll_up_one(self):
+        """Scroll up one item, return True if focus changed"""
+        return await self._scroll_one('up')
+
     async def _extract_chat_messages_helper(self):
-        """Simplified message extraction using Python logic with targeted row ID waits."""
+        """Extract messages from bottom to top, stopping at first previously seen message."""
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         
-        logger.debug("Starting simplified chat message extraction...")
+        logger.debug("Starting bottom-to-top chat message extraction...")
         
-        logger.debug("Scrolling to top of chat window...")
-        await self._scroll_to_top()
+        logger.debug("Scrolling to bottom of chat window...")
+        await self._scroll_to_bottom()
+        
+        # Wait briefly for DOM to stabilize after scrolling
+        await asyncio.sleep(0.2)
+        
+        # Collect visible rows to find the maximum row ID
+        row_data_list = await self._collect_visible_row_data()
+        if not row_data_list:
+            raise RuntimeError("No chat messages found in the window")
+        
+        max_row_id = max(int(row['rowId']) for row in row_data_list)
+        logger.debug(f"Found maximum row ID: {max_row_id}")
 
         seen_row_ids = set()
         all_messages = []
         max_attempts = Constants.MAX_ATTEMPTS_EXTRACTION
-        current_expected_id = 0
+        current_expected_id = max_row_id
 
         for attempt in range(max_attempts):
+            # Check if we've already seen this message in a previous extraction
+            if current_expected_id in self.previously_seen_row_ids:
+                logger.debug(f"Row ID {current_expected_id} was previously seen, stopping extraction")
+                break
+            
             # Wait for the expected row ID selector to be available using Playwright
             row_selector = f'div.interactive-list > div.monaco-list[aria-label="Chat"] > div.monaco-scrollable-element > div.monaco-list-rows > div.monaco-list-row[data-index="{current_expected_id}"]'
             try:
@@ -627,9 +688,9 @@ class AutoVSCodeCopilot:
                 logger.debug(f"Row ID {current_expected_id} is now available.")
             except PlaywrightTimeoutError:
                 logger.debug(f"Row ID {current_expected_id} not found within timeout, attempting refocus.")
-                # Try sending ArrowDown then ArrowUp to force refocus
-                await self.page.keyboard.press('ArrowDown')
+                # Try sending ArrowUp then ArrowDown to force refocus
                 await self.page.keyboard.press('ArrowUp')
+                await self.page.keyboard.press('ArrowDown')
                 # Try again for the same row ID
                 try:
                     await self.page.wait_for_selector(row_selector, timeout=Constants.TIMEOUT_REFOCUS)
@@ -638,7 +699,7 @@ class AutoVSCodeCopilot:
                     logger.warning(f"Row ID {current_expected_id} still not found after refocus, stopping.")
                     break
             
-            # Collect visible row data and process up to the expected ID
+            # Collect visible row data and process the expected ID
             row_data_list = await self._collect_visible_row_data()
             expected_row = next((row for row in row_data_list if int(row['rowId']) == current_expected_id), None)
             if expected_row:
@@ -657,19 +718,37 @@ class AutoVSCodeCopilot:
                         for msg in messages:
                             logger.debug(f"Added {msg['entity']} message: {msg['text'][:50]}...")
             
-                    logger.debug(f"Attempt {attempt + 1}: Processed up to row {current_expected_id}, total messages: {len(all_messages)}")
+                    logger.debug(f"Attempt {attempt + 1}: Processed row {current_expected_id}, total messages: {len(all_messages)}")
             else:
                 logger.warning(f"Expected row ID {current_expected_id} not found in collected data.")
             
-            # Increment expected ID and try to scroll down
-            current_expected_id += 1
-            logger.debug("Scrolling down...")
-            focus_changed = await self._scroll_down_one()
+            # Decrement expected ID and try to scroll up
+            current_expected_id -= 1
+            
+            # Stop if we've reached row 0
+            if current_expected_id < 0:
+                logger.debug("Reached top of chat (row 0), extraction complete")
+                break
+            
+            logger.debug("Scrolling up...")
+            focus_changed = await self._scroll_up_one()
             if not focus_changed:
                 logger.debug("No more content to scroll, extraction complete")
                 break
         
-        return all_messages
+        # Update the set of previously seen row IDs
+        self.previously_seen_row_ids.update(seen_row_ids)
+        logger.debug(f"Updated previously_seen_row_ids, now contains {len(self.previously_seen_row_ids)} IDs")
+        
+        # Reverse to maintain chronological order (oldest first)
+        all_messages.reverse()
+        
+        # Prepend previously extracted messages and update stored messages
+        complete_messages = self.previously_extracted_messages + all_messages
+        self.previously_extracted_messages = complete_messages
+        logger.debug(f"Returning {len(complete_messages)} total messages ({len(self.previously_extracted_messages) - len(all_messages)} old + {len(all_messages)} new)")
+        
+        return complete_messages
 
     async def _click_confirmation_buttons_recursively(self, first_invocation=True):
         """Recursively click confirmation buttons until none remain."""
@@ -688,6 +767,198 @@ class AutoVSCodeCopilot:
         await asyncio.sleep(Constants.WAIT_AFTER_CLICK)
         
         await self._click_confirmation_buttons_recursively(first_invocation=False)
+
+    async def extract_all_chat_messages_old(self):
+        """
+        Extract all chat messages, handling confirmation and loading in a loop until complete.
+        Also dismisses error dialogs (e.g., 'Error managing packages') if present.
+        Uses page.evaluate + MutationObserver to avoid Trusted Types issues with wait_for_function.
+        """
+        assert self.page is not None, "VS Code not launched. Call launch() first."
+        
+        logger.debug("Starting extract_all_chat_messages with confirmation/loading/error handling...")
+        await self.page.wait_for_load_state('domcontentloaded')
+        iteration = 0
+
+        while True:
+            iteration += 1
+            logger.debug(f"extract_all_chat_messages iteration {iteration}: checking chat state...")
+            
+            state = await self._evaluate_with_retry(f"""
+                async () => {{
+                    // Consider the chat 'loading' if the loading indicator is present
+                    // OR the send button is not visible (send button hidden implies response still being produced).
+                    const isLoading = () => {{
+                        const loading = !!document.querySelector('{Constants.SELECTOR_CHAT_RESPONSE_LOADING}');
+                        const sendBtn = document.querySelector('{Constants.SELECTOR_SEND_BUTTON}');
+                        const sendVisible = (!!sendBtn && sendBtn.offsetParent !== null);
+                        // console.log(`Loading indicator present: ${{loading}}, send button ${{!!sendBtn}}, send button visible: ${{sendVisible}}`);
+                        return loading || !sendVisible;
+                    }};
+                    const isConfirmation = () => !!Array.from(document.querySelectorAll('{Constants.SELECTOR_CONTINUE_BUTTON}, {Constants.SELECTOR_CONTINUE_ITERATING_BUTTON}'))
+                        .filter(el => el.offsetParent !== null)
+                        .find(el => {Constants.CONTINUE_BUTTON_TEXT}.includes(el.innerText.trim()));
+                    const isErrorOverlay = () => !!document.querySelector('{Constants.SELECTOR_ERROR_OVERLAY}');
+                    const isChatError = () => {{
+                        const nodes = Array.from(document.querySelectorAll('{Constants.SELECTOR_CHAT_ERROR}'));
+                        //console.log(`Found ${{nodes.length}} chat error nodes`);
+                        nodes.forEach(btn => console.log(`  Chat error button text: '${{btn.innerText.trim()}}' visible=${{btn.offsetParent !== null}}`));
+                        return nodes.some(el => el.offsetParent !== null && el.innerText.trim() === 'Try Again');
+                    }};
+                    const isToolLoading = () => !!document.querySelector('{Constants.SELECTOR_TERMINAL_CMD_LOADING}');
+
+                    let currentToolLoading = isToolLoading();
+                    let currentTimeout = currentToolLoading ? {Constants.TIMEOUT_TOOL_LOADING} : {Constants.TIMEOUT_SAFETY};
+
+                    const checkAsync = async () => {{
+                        //console.log('Checking chat state: loading, confirmation, errorDialog, toolLoading...');
+                        const loading = isLoading();
+                        const confirmation = isConfirmation();
+                        const errorOverlay = isErrorOverlay();
+                        const chatError = isChatError();
+                        
+                        // If there's no loading, confirmation, or error state, consider chat ready
+                        if (!loading && !confirmation && !errorOverlay && !chatError) {{
+                            // Return immediately when chat is observed to be idle/no dialogs —
+                            // removing the previous multi-observation "stabilization" logic.
+                            return {{ loading: false, confirmation, errorOverlay, chatError, timeout: false, toolLoading: currentToolLoading }};
+                        }}
+                        
+                        if (confirmation || errorOverlay || chatError) {{
+                            console.log('Chat state determined');
+                            return {{ loading, confirmation, errorOverlay, chatError, timeout: false, toolLoading: currentToolLoading }};
+                        }}
+                        
+                        console.log('Chat state not determined, continuing...');
+                        return null;
+                    }};
+
+                    let observer = null;
+                    let timer = null;
+                    
+                    const cleanup = () => {{
+                        if (timer) {{
+                            clearTimeout(timer);
+                            timer = null;
+                        }}
+                        if (observer) {{
+                            observer.disconnect();
+                            observer = null;
+                        }}
+                    }};
+                    
+                    try {{
+                        return await new Promise(async (resolve, reject) => {{
+                            const setTimer = () => {{
+                                timer = setTimeout(() => {{
+                                    resolve({{ loading: false, confirmation: false, errorOverlay: false, chatError: false, timeout: true, toolLoading: currentToolLoading }});
+                                }}, currentTimeout);
+                            }};
+
+                            const handleMutation = async () => {{
+                                const newToolLoading = isToolLoading();
+                                if (newToolLoading !== currentToolLoading) {{
+                                    currentToolLoading = newToolLoading;
+                                    currentTimeout = currentToolLoading ? {Constants.TIMEOUT_TOOL_LOADING} : {Constants.TIMEOUT_SAFETY};
+                                    clearTimeout(timer);
+                                    setTimer();
+                                }}
+                                const res = await checkAsync();
+                                if (res) {{
+                                    resolve(res);
+                                }}
+                            }};
+
+                            const initial = await checkAsync();
+                            if (initial) return resolve(initial);
+
+                            observer = new MutationObserver(handleMutation);
+                            
+                            // Narrow scope to chat session container to reduce interference
+                            const chatContainer = document.querySelector('{Constants.SELECTOR_INTERACTIVE_SESSION}');
+                            if (!chatContainer) {{
+                                console.error('Chat container not found');
+                                return resolve({{ loading: false, confirmation: false, errorOverlay: false, chatError: false, timeout: true, toolLoading: currentToolLoading }});
+                            }}
+                            
+                            observer.observe(chatContainer, {{ childList: true, subtree: true, attributes: true }});
+
+                            setTimer();
+                        }});
+                    }} finally {{
+                        cleanup();
+                    }}
+                }}
+            """)
+
+            logger.debug(f"Chat state: loading={state.get('loading')}, confirmation={state.get('confirmation')}, errorOverlay={state.get('errorOverlay')}, chatError={state.get('chatError')}, timeout={state.get('timeout')}, toolLoading={state.get('toolLoading')}")
+
+            loading = await self.page.locator(Constants.SELECTOR_CHAT_RESPONSE_LOADING).all()
+            logger.debug(f"Loading indicators found: {len(loading)}")
+
+            send_button_visible = await self.page.locator(Constants.SELECTOR_SEND_BUTTON).is_visible()
+            logger.debug(f"Send button visible: {send_button_visible}")
+            if not state['loading'] and not send_button_visible:
+                logger.debug("Send button not visible after loading (bad)")
+
+            if state.get("timeout"):
+                logger.error("Timed out waiting for chat to progress (loading end or confirmation/error).")
+                # Check for tool loading on timeout
+                if state.get("toolLoading"):
+                    logger.warning("Tool loading detected on timeout, attempting to recover by clicking cancel...")
+
+                    # Click cancel button
+                    cancel_locator = self.page.get_by_role(
+                        role=Constants.SELECTOR_CANCEL_BUTTON_ROLE[0],
+                        name=Constants.SELECTOR_CANCEL_BUTTON_ROLE[1],
+                        exact=Constants.SELECTOR_CANCEL_BUTTON_ROLE[2]
+                    ).filter(has=self.page.locator('.codicon-stop-circle'))
+                    await cancel_locator.click(timeout=0)
+
+                    # Send message to user
+                    await self.send_chat_message(Constants.STUCK_MESSAGE)
+
+                    continue  # Re-check state after handling
+                else:
+                    raise RuntimeError("Timed out waiting for chat to progress (loading end or confirmation/error).")
+
+            if state.get("confirmation"):
+                logger.debug("Confirmation prompt detected, clicking Continue...")
+                await self._click_confirmation_buttons_recursively()
+                continue  # Re-check state after handling
+
+            if state.get("chatError"):
+                logger.debug("Chat error detected (Try Again), clicking Try Again button...")
+                await self._click_chat_error_try_again()
+                continue
+
+            if state.get("errorOverlay"):
+                logger.debug("Error overlay detected, dismissing...")
+                await self._dismiss_error_overlay()
+                continue
+
+            # Reached here: loading has ended, no confirmation or error dialog
+            logger.debug("Chat loading complete, no confirmation or error needed. Starting message extraction...")
+            break
+
+        # Sanity check: Make sure that the send button is visible again
+        try:
+            await self.page.locator(Constants.SELECTOR_SEND_BUTTON).wait_for(state='visible', timeout=10000)
+        except PlaywrightTimeoutError:
+            logger.warning("Send button not visible???")
+            await self.take_screenshot("/tmp/send-button-not-visible.png")
+            import pdb
+            pdb.set_trace()
+            raise RuntimeError("Send button not visible")
+
+        # Final extraction
+        logger.debug("Calling _extract_chat_messages_helper for final extraction...")
+        messages = await self._extract_chat_messages_helper()        
+        logger.debug(f"Extracted {len(messages)} total messages")
+        if messages:
+            logger.debug(f"Last msg: {messages[-1]['text']}")
+
+        return messages
 
     async def extract_all_chat_messages(self):
         """
@@ -834,7 +1105,7 @@ class AutoVSCodeCopilot:
                         name=Constants.SELECTOR_CANCEL_BUTTON_ROLE[1],
                         exact=Constants.SELECTOR_CANCEL_BUTTON_ROLE[2]
                     ).filter(has=self.page.locator('.codicon-stop-circle'))
-                    await cancel_locator.click(timeout=0)
+                    await cancel_locator.click(timeout=Constants.TIMEOUT_SHORT)
 
                     # Send message to user
                     await self.send_chat_message(Constants.STUCK_MESSAGE)
