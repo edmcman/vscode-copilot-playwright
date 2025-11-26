@@ -328,17 +328,14 @@ class AutoVSCodeCopilot:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         logger.debug(f'Writing chat message: "{message}"')
 
-        input_selector = Constants.SELECTOR_CHAT_INPUT_CONTAINER
-        input_locator = self.page.locator(input_selector)
+        input_locator = self.page.locator(Constants.SELECTOR_CHAT_INPUT_CONTAINER)
         await input_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_INPUT_LOCATOR)
         logger.debug(f"Focusing on {input_locator}")
         await input_locator.click()
-        for c in message:
-            await input_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_INPUT_LOCATOR)
-            if c == '\n':
-                await self.page.keyboard.press('Shift+Enter')
-            else:
-                await input_locator.type(c, delay=Constants.TYPING_DELAY)
+        for part in message.split('\n'):
+            await input_locator.press_sequentially(part, delay=Constants.TYPING_DELAY)
+            await input_locator.press('Shift+Enter')
+
 
     async def _send_chat_message_helper(self):
         if not self.page:
