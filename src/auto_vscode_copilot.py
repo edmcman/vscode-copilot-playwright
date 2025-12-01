@@ -50,7 +50,7 @@ class Constants:
     TIMEOUT_SCROLL_DOWN = 200
 
     # Other constants
-    MAX_ATTEMPTS_EXTRACTION = 200
+    MAX_ATTEMPTS_EXTRACTION = 1000
     TYPING_DELAY = 10
     TERMINATE_TIMEOUT = 2  # seconds
     STABILITY_CHECK_COUNT = 3  # Number of consecutive stable checks required
