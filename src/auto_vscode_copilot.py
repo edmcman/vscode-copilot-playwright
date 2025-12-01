@@ -64,6 +64,7 @@ class Constants:
     SELECTOR_SEND_BUTTON = 'a.action-label.codicon.codicon-send'
     SELECTOR_INTERACTIVE_SESSION = 'div.interactive-session'
     SELECTOR_CHAT_RESPONSE_LOADING = 'div.chat-response-loading'
+    SELECTOR_CHAT_LIST = 'div.monaco-list[aria-label="Chat"]'
     SELECTOR_TRUST_BUTTON_ROLE = ("button", "Trust", True)  # role, name, exact
     SELECTOR_CANCEL_BUTTON_ROLE = ("button", "Cancel (Ctrl+Escape)", True)
     SELECTOR_CONTINUE_BUTTON = 'div.chat-confirmation-widget-buttons a.monaco-button'
@@ -336,7 +337,6 @@ class AutoVSCodeCopilot:
             await input_locator.press_sequentially(part, delay=Constants.TYPING_DELAY)
             await input_locator.press('Shift+Enter')
 
-
     async def _send_chat_message_helper(self):
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
@@ -424,6 +424,12 @@ class AutoVSCodeCopilot:
                 logger.warning(f"Error saving Playwright trace: {e}")
         if self.page:
             try:
+                logger.debug('Sending quit shortcut to VS Code...')
+                await self.page.keyboard.press('Control+q')
+            except Exception as e:
+                logger.warning(f'Error sending quit shortcut: {e}')
+        if self.page:
+            try:
                 await self.page.close()
             except Exception as e:
                 logger.warning(f'Error closing page: {e}')
@@ -437,8 +443,12 @@ class AutoVSCodeCopilot:
                 await self.playwright.stop()
             except Exception as e:
                 logger.warning(f'Error stopping Playwright: {e}')
+                
+        # Wait briefly to allow VS Code to shut down gracefully
+        await asyncio.sleep(Constants.TIMEOUT_MID / 1000)
+
         if self.vscode_process and self.vscode_process.poll() is None:
-            logger.debug('Closing VS Code process...')
+            logger.warning('Terminating VS Code process...')
             self.vscode_process.terminate()
             try:
                 self.vscode_process.wait(timeout=Constants.TERMINATE_TIMEOUT)
@@ -560,6 +570,9 @@ class AutoVSCodeCopilot:
         Args:
             direction: Either 'top' or 'bottom'
         """
+        if not self.page:
+            raise RuntimeError('VS Code not launched. Call launch() first.')
+        
         key_config = {
             'top': ('Home', 'Home', 36),
             'bottom': ('End', 'End', 35)
@@ -568,22 +581,14 @@ class AutoVSCodeCopilot:
             raise ValueError(f"direction must be 'top' or 'bottom', got '{direction}'")
         
         key, code, keyCode = key_config[direction]
-        script = f"""
-            async () => {{
-                const listContainer = document.querySelector('div.monaco-list[aria-label="Chat"]');
-                if (listContainer) {{
-                    listContainer.focus();
-                    await new Promise(resolve => setTimeout(resolve, {Constants.TIMEOUT_SCROLL}));
-                    listContainer.dispatchEvent(new KeyboardEvent('keydown', {{
-                        key: '{key}', code: '{code}', keyCode: {keyCode}, which: {keyCode},
-                        bubbles: true, cancelable: true
-                    }}));
-                }} else {{
-                    console.log('No chat list container found for scrolling to {direction}');
-                }}
-            }}
-        """
-        await self._evaluate_with_retry(script)
+        locator = self.page.locator(Constants.SELECTOR_CHAT_LIST)
+        if await locator.count() > 0:
+            await locator.focus()
+            await asyncio.sleep(Constants.TIMEOUT_SCROLL / 1000)
+            await self.page.keyboard.press(key)
+            await asyncio.sleep(Constants.TIMEOUT_SCROLL / 1000)
+        else:
+            logger.debug(f'No chat list container found for scrolling to {direction}')
 
     async def _scroll_to_top(self):
         """Scroll chat to top"""
@@ -680,7 +685,7 @@ class AutoVSCodeCopilot:
                 break
             
             # Wait for the expected row ID selector to be available using Playwright
-            row_selector = f'div.interactive-list > div.monaco-list[aria-label="Chat"] > div.monaco-scrollable-element > div.monaco-list-rows > div.monaco-list-row[data-index="{current_expected_id}"]'
+            row_selector = f'div.interactive-list > {Constants.SELECTOR_CHAT_LIST} > div.monaco-scrollable-element > div.monaco-list-rows > div.monaco-list-row[data-index="{current_expected_id}"]'
             try:
                 await self.page.wait_for_selector(row_selector, timeout=Constants.TIMEOUT_ROW_SELECTOR)  # 5s timeout for availability
                 logger.debug(f"Row ID {current_expected_id} is now available.")
@@ -761,7 +766,7 @@ class AutoVSCodeCopilot:
             return
 
         logger.debug(f"Clicking confirmation button with text: '{await valid_buttons[-1].inner_text()}'")
-        await valid_buttons[-1].click()
+        await valid_buttons[-1].click(force=True)
         await asyncio.sleep(Constants.WAIT_AFTER_CLICK)
         
         await self._click_confirmation_buttons_recursively(first_invocation=False)
@@ -1147,6 +1152,9 @@ class AutoVSCodeCopilot:
         logger.debug(f"Extracted {len(messages)} total messages")
         if messages:
             logger.debug(f"Last msg: {messages[-1]['text']}")
+
+        # Scroll back to bottom after extraction
+        await self._scroll_to_bottom()
 
         return messages
 
