@@ -77,7 +77,7 @@ class Constants:
     CONTINUE_BUTTON_TEXT = ["Allow", "Continue", "Allow and Review"]
     STUCK_MESSAGE = f"Your command took longer than {TIMEOUT_TOOL_LOADING/1000} seconds so I stopped it. I can't interact with terminal commands."
     REMOTE_OPENING_TEXT = "Opening Remote..."
-    JS_SELECTORS = {
+    LOCATOR_SELECTORS = {
         'INTERACTIVE_SESSION': 'div.interactive-session > div.interactive-list',
         'MONACO_LIST_ROWS': 'div.monaco-list[aria-label="Chat"] > div.monaco-scrollable-element > div.monaco-list-rows > div.monaco-list-row',
         'USER_REQUEST': '.interactive-request > .value',
@@ -85,7 +85,13 @@ class Constants:
         'RENDERED_MARKDOWN': ':scope > .rendered-markdown',
         'CHAT_PARTS': ':scope > .rendered-markdown, :scope > .chat-tool-invocation-part, :scope > .chat-tool-result-part, :scope > .chat-confirmation-widget',
         'CONFIRMATION_TITLE': '.chat-confirmation-widget-title .rendered-markdown',
-        'ERROR_OVERLAY': 'div.notifications-toasts.visible div.notification-list-item'
+        'TERMINAL_OUTPUT': '.chat-terminal-output-container pre.chat-terminal-output',
+        'TOOL_INVOCATION': '.chat-tool-invocation-part',
+        'TOOL_RESULT': '.chat-tool-result-part',
+        'ERROR_OVERLAY': 'div.notifications-toasts.visible div.notification-list-item',
+        'SHOW_OUTPUT_BUTTON': 'a.action-label.codicon-chevron-right[aria-label="Show Output"]'
+    }
+    JS_SELECTORS = {
     }
 
     # Paths
@@ -501,10 +507,21 @@ class AutoVSCodeCopilot:
                         'html': html,
                         'rowId': element_data['rowId']
                     })
-                case {'type': 'tool', 'text': text, 'html': html} if text.strip() != "":
+                case {'type': 'tool-invocation', 'text': text, 'html': html, 'terminal_output': terminal_output} if text.strip() != "":
+                    parse_accumulated_markdown()
+                    msg = {
+                        'entity': 'tool-invocation',
+                        'message': text,
+                        'text': text,
+                        'html': html,
+                        'rowId': element_data['rowId'],
+                        'terminal_output': terminal_output
+                    }
+                    messages.append(msg)
+                case {'type': 'tool-result', 'text': text, 'html': html} if text.strip() != "":
                     parse_accumulated_markdown()
                     messages.append({
-                        'entity': 'tool',
+                        'entity': 'tool-result',
                         'message': text,
                         'text': text,
                         'html': html,
@@ -521,10 +538,10 @@ class AutoVSCodeCopilot:
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
 
-        session = self.page.locator('div.interactive-session > div.interactive-list')
+        session = self.page.locator(Constants.LOCATOR_SELECTORS['INTERACTIVE_SESSION'])
         assert await session.count() > 0, "No interactive session found"
 
-        rows = await session.locator('div.monaco-list[aria-label="Chat"] > div.monaco-scrollable-element > div.monaco-list-rows > div.monaco-list-row').all()
+        rows = await session.locator(Constants.LOCATOR_SELECTORS['MONACO_LIST_ROWS']).all()
 
         async def extract_text_html(el):
             return {'text': await el.inner_text() or '', 'html': await el.inner_html() or ''}
@@ -535,28 +552,42 @@ class AutoVSCodeCopilot:
                 case c if 'rendered-markdown' in c:
                     return {'type': 'rendered-markdown', **(await extract_text_html(el))}
                 case c if 'chat-confirmation-widget' in c:
-                    title = el.locator('.chat-confirmation-widget-title .rendered-markdown')
+                    title = el.locator(Constants.LOCATOR_SELECTORS['CONFIRMATION_TITLE'])
                     if await title.count() > 0:
                         return {'type': 'confirmation', **(await extract_text_html(title.first))}
                     return {'type': 'confirmation', **(await extract_text_html(el))}
+                case c if 'chat-tool-invocation-part' in c:
+                    # Click "Show Output" button if present to expand terminal output
+                    show_output_btn = el.locator(Constants.LOCATOR_SELECTORS['SHOW_OUTPUT_BUTTON'])
+                    if await show_output_btn.count() > 0:
+                        await show_output_btn.first.dispatch_event('click')
+                        await asyncio.sleep(Constants.TIMEOUT_SCROLL/1000)  # Brief wait for expansion
+                    # Check for nested terminal output inside tool invocation
+                    terminal_output = el.locator(Constants.LOCATOR_SELECTORS['TERMINAL_OUTPUT'])
+                    terminal_data = None
+                    if await terminal_output.count() > 0:
+                        terminal_data = await extract_text_html(terminal_output.first)
+                    return {'type': 'tool-invocation', 'terminal_output': terminal_data, **(await extract_text_html(el))}
+                case c if 'chat-tool-result-part' in c:
+                    return {'type': 'tool-result', **(await extract_text_html(el))}
                 case _:
-                    return {'type': 'tool', **(await extract_text_html(el))}
+                    return {'type': 'unknown', **(await extract_text_html(el))}
 
         async def process_row(row):
             row_id = await row.get_attribute('data-index')
-            user = row.locator('.interactive-request > .value')
-            resp = row.locator('.interactive-response > .value')
+            user = row.locator(Constants.LOCATOR_SELECTORS['USER_REQUEST'])
+            resp = row.locator(Constants.LOCATOR_SELECTORS['ASSISTANT_RESPONSE'])
 
             has_user, has_resp = await user.count() > 0, await resp.count() > 0
             logger.debug(f"Debug: Processing row ID {row_id}, user: {has_user}, resp: {has_resp}")
 
             match (has_user, has_resp):
                 case (True, _):
-                    markdown_els = await user.first.locator(':scope > .rendered-markdown').all()
+                    markdown_els = await user.first.locator(Constants.LOCATOR_SELECTORS['RENDERED_MARKDOWN']).all()
                     rendered_markdown = [await extract_text_html(el) for el in markdown_els]
                     return {'type': 'user', 'rowId': row_id, 'rendered_markdown': rendered_markdown}
                 case (_, True):
-                    part_els = await resp.first.locator(':scope > .rendered-markdown, :scope > .chat-tool-invocation-part, :scope > .chat-tool-result-part, :scope > .chat-confirmation-widget').all()
+                    part_els = await resp.first.locator(Constants.LOCATOR_SELECTORS['CHAT_PARTS']).all()
                     parts = [await classify_part(el) for el in part_els]
                     return {'type': 'assistant', 'rowId': row_id, 'parts': parts}
                 case _:
@@ -969,6 +1000,20 @@ class AutoVSCodeCopilot:
         Extract all chat messages, handling confirmation and loading in a loop until complete.
         Also dismisses error dialogs (e.g., 'Error managing packages') if present.
         Uses page.evaluate + MutationObserver to avoid Trusted Types issues with wait_for_function.
+        
+        Returns:
+            List[dict]: A list of message dictionaries, each containing:
+                - entity: The message type, one of:
+                    - 'user': User input message
+                    - 'assistant': Assistant response (markdown text)
+                    - 'tool-invocation': A tool being called by the assistant
+                    - 'tool-result': The result returned by a tool
+                    - 'confirmation': A confirmation dialog prompt
+                - message: The text content of the message
+                - text: Same as message (for compatibility)
+                - html: The raw HTML content
+                - rowId: The row ID from the chat DOM
+                - terminal_output: (tool-invocation only) Terminal output dict with 'text' and 'html' keys, if present
         """
         assert self.page is not None, "VS Code not launched. Call launch() first."
         
