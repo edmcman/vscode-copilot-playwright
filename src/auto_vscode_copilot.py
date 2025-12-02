@@ -432,6 +432,8 @@ class AutoVSCodeCopilot:
             try:
                 logger.debug('Sending quit shortcut to VS Code...')
                 await self.page.keyboard.press('Control+q')
+                # Wait briefly to allow VS Code to shut down gracefully
+                await asyncio.sleep(Constants.TIMEOUT_MID / 1000)
             except Exception as e:
                 logger.warning(f'Error sending quit shortcut: {e}')
         if self.page:
@@ -450,9 +452,6 @@ class AutoVSCodeCopilot:
             except Exception as e:
                 logger.warning(f'Error stopping Playwright: {e}')
                 
-        # Wait briefly to allow VS Code to shut down gracefully
-        await asyncio.sleep(Constants.TIMEOUT_MID / 1000)
-
         if self.vscode_process and self.vscode_process.poll() is None:
             logger.warning('Terminating VS Code process...')
             self.vscode_process.terminate()
