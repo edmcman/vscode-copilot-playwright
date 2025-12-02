@@ -557,10 +557,11 @@ class AutoVSCodeCopilot:
                     return {'type': 'confirmation', **(await extract_text_html(el))}
                 case c if 'chat-tool-invocation-part' in c:
                     # Click "Show Output" button if present to expand terminal output
-                    show_output_btn = el.locator(Constants.LOCATOR_SELECTORS['SHOW_OUTPUT_BUTTON'])
-                    if await show_output_btn.count() > 0:
-                        await show_output_btn.first.dispatch_event('click')
-                        await asyncio.sleep(Constants.TIMEOUT_SCROLL/1000)  # Brief wait for expansion
+                    # ejs: Temporarily disabled because it gets accidentally copied into the tool-invocation message.
+                    # show_output_btn = el.locator(Constants.LOCATOR_SELECTORS['SHOW_OUTPUT_BUTTON'])
+                    # if await show_output_btn.count() > 0:
+                    #     await show_output_btn.first.dispatch_event('click')
+                    #     await asyncio.sleep(Constants.TIMEOUT_SCROLL/1000)  # Brief wait for expansion
                     # Check for nested terminal output inside tool invocation
                     terminal_output = el.locator(Constants.LOCATOR_SELECTORS['TERMINAL_OUTPUT'])
                     terminal_data = None
@@ -587,6 +588,7 @@ class AutoVSCodeCopilot:
                     return {'type': 'user', 'rowId': row_id, 'rendered_markdown': rendered_markdown}
                 case (_, True):
                     part_els = await resp.first.locator(Constants.LOCATOR_SELECTORS['CHAT_PARTS']).all()
+                    logger.debug(f"part_els: {part_els}")
                     parts = [await classify_part(el) for el in part_els]
                     return {'type': 'assistant', 'rowId': row_id, 'parts': parts}
                 case _:
