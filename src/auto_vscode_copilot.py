@@ -517,52 +517,53 @@ class AutoVSCodeCopilot:
         return messages
 
     async def _collect_visible_row_data(self):
-        """Collect raw DOM data from visible rows"""
-        script = f"""
-            () => {{
-                const SELECTORS = {Constants.JS_SELECTORS};
+        """Collect raw DOM data from visible rows using Playwright locators"""
+        if not self.page:
+            raise RuntimeError('VS Code not launched. Call launch() first.')
 
-                // Find the chat session first, just like the old code
-                const session = document.querySelector(SELECTORS.INTERACTIVE_SESSION);
-                if (!session) {{
-                    console.log('No interactive session found');
-                    return [];
-                }}
+        session = self.page.locator('div.interactive-session > div.interactive-list')
+        assert await session.count() > 0, "No interactive session found"
 
-                // Only look for Monaco list rows within the chat session
-                const rows = Array.from(session.querySelectorAll(SELECTORS.MONACO_LIST_ROWS));
-                return rows.map(row => {{
-                    const rowId = row.getAttribute('data-index');
-                    const user = row.querySelector(SELECTORS.USER_REQUEST);
-                    const resp = row.querySelector(SELECTORS.ASSISTANT_RESPONSE);
+        rows = await session.locator('div.monaco-list[aria-label="Chat"] > div.monaco-scrollable-element > div.monaco-list-rows > div.monaco-list-row').all()
 
-                    console.log(`Debug: Processing row ID ${{rowId}}, user: ${{!!user}}, resp: ${{!!resp}}`);
+        async def extract_text_html(el):
+            return {'text': await el.inner_text() or '', 'html': await el.inner_html() or ''}
 
-                    if (user) {{
-                        const rendered_markdown = Array.from(user.querySelectorAll(SELECTORS.RENDERED_MARKDOWN)).map(el => ({{
-                            text: el.innerText || '',
-                            html: el.innerHTML || ''
-                        }}));
-                        return {{ type: 'user', rowId, rendered_markdown }};
-                    }} else if (resp) {{
-                        const parts = Array.from(resp.querySelectorAll(SELECTORS.CHAT_PARTS)).map(el => {{
-                            if (el.classList.contains('rendered-markdown')) {{
-                                return {{ type: 'rendered-markdown', text: el.innerText || '', html: el.innerHTML || '' }};
-                            }} else if (el.classList.contains('chat-confirmation-widget')) {{
-                                const title = el.querySelector(SELECTORS.CONFIRMATION_TITLE);
-                                return {{ type: 'confirmation', text: title?.innerText || '', html: title?.innerHTML || el.innerHTML || '' }};
-                            }} else {{
-                                return {{ type: 'tool', text: el.innerText || '', html: el.innerHTML || '' }};
-                            }}
-                        }});
-                        return {{ type: 'assistant', rowId, parts }};
-                    }}
-                    console.log(`Unknown row type for row ID ${{rowId}} ${{row.outerHTML}}, skipping`);
-                    return {{ type: 'unknown', rowId }};
-                }});
-            }}
-        """
-        return await self._evaluate_with_retry(script)
+        async def classify_part(el):
+            classes = await el.get_attribute('class') or ''
+            match classes:
+                case c if 'rendered-markdown' in c:
+                    return {'type': 'rendered-markdown', **(await extract_text_html(el))}
+                case c if 'chat-confirmation-widget' in c:
+                    title = el.locator('.chat-confirmation-widget-title .rendered-markdown')
+                    if await title.count() > 0:
+                        return {'type': 'confirmation', **(await extract_text_html(title.first))}
+                    return {'type': 'confirmation', **(await extract_text_html(el))}
+                case _:
+                    return {'type': 'tool', **(await extract_text_html(el))}
+
+        async def process_row(row):
+            row_id = await row.get_attribute('data-index')
+            user = row.locator('.interactive-request > .value')
+            resp = row.locator('.interactive-response > .value')
+
+            has_user, has_resp = await user.count() > 0, await resp.count() > 0
+            logger.debug(f"Debug: Processing row ID {row_id}, user: {has_user}, resp: {has_resp}")
+
+            match (has_user, has_resp):
+                case (True, _):
+                    markdown_els = await user.first.locator(':scope > .rendered-markdown').all()
+                    rendered_markdown = [await extract_text_html(el) for el in markdown_els]
+                    return {'type': 'user', 'rowId': row_id, 'rendered_markdown': rendered_markdown}
+                case (_, True):
+                    part_els = await resp.first.locator(':scope > .rendered-markdown, :scope > .chat-tool-invocation-part, :scope > .chat-tool-result-part, :scope > .chat-confirmation-widget').all()
+                    parts = [await classify_part(el) for el in part_els]
+                    return {'type': 'assistant', 'rowId': row_id, 'parts': parts}
+                case _:
+                    logger.debug(f"Unknown row type for row ID {row_id}, skipping")
+                    return {'type': 'unknown', 'rowId': row_id}
+
+        return [await process_row(row) for row in rows]
 
     async def _scroll_to_edge(self, direction: str):
         """Scroll chat to top or bottom
