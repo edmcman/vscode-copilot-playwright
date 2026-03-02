@@ -318,7 +318,7 @@ class AutoVSCodeCopilot:
         # Wait for Copilot Chat extension to be installed (important for devcontainer scenarios)
         logger.debug('Waiting for Copilot Chat extension to be installed...')
         try:
-            await asyncio.wait_for(self.copilot_chat_installed.wait(), timeout=Constants.TIMEOUT_LONG / 1000)
+            await asyncio.wait_for(self.copilot_chat_installed.wait(), timeout=Constants.TIMEOUT_MID / 1000)
             logger.debug('Copilot Chat extension is installed')
         except TimeoutError:
             # Ed doesn't know why, but sometimes we just don't see these events.
@@ -327,7 +327,7 @@ class AutoVSCodeCopilot:
         # Wait for OAI-compatible Copilot extension to be installed
         logger.debug("Waiting for OAI-compatible Copilot extension to be installed...")
         try:
-            await asyncio.wait_for(self.oai_compatible_copilot_installed.wait(), timeout=Constants.TIMEOUT_LONG / 1000)
+            await asyncio.wait_for(self.oai_compatible_copilot_installed.wait(), timeout=Constants.TIMEOUT_MID / 1000)
             logger.debug("OAI-compatible Copilot extension is installed")
         except TimeoutError:
             logger.debug("Timeout waiting for OAI-compatible Copilot extension installation event. Continuing anyway...")
