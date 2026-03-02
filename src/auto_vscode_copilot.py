@@ -318,7 +318,7 @@ class AutoVSCodeCopilot:
         # Wait for Copilot Chat extension to be installed (important for devcontainer scenarios)
         logger.debug('Waiting for Copilot Chat extension to be installed...')
         try:
-            await asyncio.wait_for(self.copilot_chat_installed.wait(), timeout=Constants.TIMEOUT_MID / 1000)
+            await asyncio.wait_for(self.copilot_chat_installed.wait(), timeout=Constants.TIMEOUT_LONG / 1000)
             logger.debug('Copilot Chat extension is installed')
         except TimeoutError:
             # Ed doesn't know why, but sometimes we just don't see these events.
@@ -327,7 +327,7 @@ class AutoVSCodeCopilot:
         # Wait for OAI-compatible Copilot extension to be installed
         logger.debug("Waiting for OAI-compatible Copilot extension to be installed...")
         try:
-            await asyncio.wait_for(self.oai_compatible_copilot_installed.wait(), timeout=Constants.TIMEOUT_MID / 1000)
+            await asyncio.wait_for(self.oai_compatible_copilot_installed.wait(), timeout=Constants.TIMEOUT_LONG / 1000)
             logger.debug("OAI-compatible Copilot extension is installed")
         except TimeoutError:
             logger.debug("Timeout waiting for OAI-compatible Copilot extension installation event. Continuing anyway...")
@@ -429,9 +429,13 @@ class AutoVSCodeCopilot:
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         logger.debug(f'📝 Writing and sending chat message: "{message}" (model: {model_label}, mode: {mode_label})')
+
         await self.pick_copilot_model_helper(model_label)
         await self.pick_copilot_mode_helper(mode_label)
         await self._write_chat_message_helper(message)
+        # I'm not quite sure why this happens, but sometimes the model resets back to auto.  This is a temporary workaround to ensure the correct model/mode is selected before sending the message.
+        await self.pick_copilot_model_helper(model_label)
+        await self.pick_copilot_mode_helper(mode_label)
         await self._send_chat_message_helper()
         logger.debug('✅ Chat message written and sent successfully!')
         return True
@@ -1296,7 +1300,28 @@ class AutoVSCodeCopilot:
             raise RuntimeError(f"Tried to select {picker_aria_label.lower()}: {option_label}, but got: {selected}")
 
     async def pick_copilot_model_helper(self, model_label=None):
-        await self.pick_copilot_picker_helper('Pick Model', model_label)
+        if not self.page:
+            raise RuntimeError('VS Code not launched. Call launch() first.')
+        attempts = 10
+        retry_sleep_seconds = 1
+        context_locator = self.page.locator('div.context-view div.monaco-list')
+        for attempt in range(attempts):
+            try:
+                await self.pick_copilot_picker_helper('Pick Model', model_label)
+                return
+            except PlaywrightTimeoutError as e:
+                if attempt == attempts - 1:
+                    raise RuntimeError(
+                        f"Model option '{model_label}' was not present in the model picker after {attempts} attempts."
+                    ) from e
+                # If the picker list is left open after a failed attempt, close it before retrying.
+                try:
+                    if await context_locator.is_visible():
+                        await self.page.keyboard.press('Escape')
+                        await context_locator.wait_for(state='hidden', timeout=Constants.TIMEOUT_SHORT)
+                except PlaywrightTimeoutError:
+                    logger.debug("Model picker list did not close after Escape; continuing with retry.")
+                await asyncio.sleep(retry_sleep_seconds)
 
     async def pick_copilot_mode_helper(self, mode_label=None):
         await self.pick_copilot_picker_helper('Set Agent', mode_label)
