@@ -25,7 +25,7 @@ class Constants:
 
     # Timeouts (in milliseconds)
     TIMEOUT_LONG = 60_000
-    TIMEOUT_MID = 10_000
+    TIMEOUT_MID = 20_000
     TIMEOUT_SHORT = 1_000
     TIMEOUT_VSCODE_START_ITERATIONS = 30
     TIMEOUT_VSCODE_START_SLEEP = 1  # seconds
@@ -137,6 +137,7 @@ class AutoVSCodeCopilot:
     previously_seen_row_ids: Set[int]
     previously_extracted_messages: List
     copilot_chat_installed: asyncio.Event
+    oai_compatible_copilot_installed: asyncio.Event
     
     def __init__(self, *args, **kwargs):
         raise RuntimeError(
@@ -176,6 +177,7 @@ class AutoVSCodeCopilot:
         self.previously_seen_row_ids = set()
         self.previously_extracted_messages = []
         self.copilot_chat_installed = asyncio.Event()
+        self.oai_compatible_copilot_installed = asyncio.Event()
         # Try ports from Constants.PORT_START up to Constants.PORT_MAX, check with socket before launching
         port = Constants.PORT_START
         max_port = Constants.PORT_MAX
@@ -266,6 +268,16 @@ class AutoVSCodeCopilot:
                 # Remove this handler once the event is detected
                 page.remove_listener("console", handle_copilot_install)
         page.on("console", handle_copilot_install)
+
+        # Add temporary handler for OAI-compatible Copilot extension installation detection
+        def handle_oai_compatible_copilot_install(msg):
+            msg_text = msg.text
+            if "Successfully installed 'johnny-zhao.oai-compatible-copilot' extension" in msg_text:
+                logger.info("Detected OAI-compatible Copilot extension installation")
+                self.oai_compatible_copilot_installed.set()
+                # Remove this handler once the event is detected
+                page.remove_listener("console", handle_oai_compatible_copilot_install)
+        page.on("console", handle_oai_compatible_copilot_install)
         
         # Add browser console log handler for debugging (if enabled)
         if logger.isEnabledFor(logging.DEBUG):
@@ -311,6 +323,14 @@ class AutoVSCodeCopilot:
         except TimeoutError:
             # Ed doesn't know why, but sometimes we just don't see these events.
             logger.debug('Timeout waiting for Copilot Chat extension installation event. Continuing anyway...')
+
+        # Wait for OAI-compatible Copilot extension to be installed
+        logger.debug("Waiting for OAI-compatible Copilot extension to be installed...")
+        try:
+            await asyncio.wait_for(self.oai_compatible_copilot_installed.wait(), timeout=Constants.TIMEOUT_MID / 1000)
+            logger.debug("OAI-compatible Copilot extension is installed")
+        except TimeoutError:
+            logger.debug("Timeout waiting for OAI-compatible Copilot extension installation event. Continuing anyway...")
 
         # Check if chat window is already visible
         input_locator = self.page.locator(Constants.SELECTOR_CHAT_INPUT_CONTAINER)
@@ -776,8 +796,8 @@ class AutoVSCodeCopilot:
         self.previously_seen_row_ids.update(seen_row_ids)
         logger.debug(f"Updated previously_seen_row_ids, now contains {len(self.previously_seen_row_ids)} IDs")
         
-        # Reverse to maintain chronological order (oldest first)
-        all_messages.reverse()
+        # Chronological by row while preserving within-row message order
+        all_messages.sort(key=lambda m: int(m["rowId"]))
         
         # Prepend previously extracted messages and update stored messages
         complete_messages = self.previously_extracted_messages + all_messages
@@ -799,7 +819,10 @@ class AutoVSCodeCopilot:
             return
 
         logger.debug(f"Clicking confirmation button with text: '{await valid_buttons[-1].inner_text()}'")
-        await valid_buttons[-1].click(force=True)
+        try:
+            await valid_buttons[-1].click(force=True)
+        except PlaywrightTimeoutError:
+            logger.warning("Timeout while clicking confirmation button, retrying...")
         await asyncio.sleep(Constants.WAIT_AFTER_CLICK)
         
         await self._click_confirmation_buttons_recursively(first_invocation=False)
@@ -1268,6 +1291,8 @@ class AutoVSCodeCopilot:
         await option_locator.click(force=True, timeout=Constants.TIMEOUT_OPTION_CLICK)
         selected = await picker_locator.inner_text()
         if selected != option_label:
+            if selected == "":
+                logger.error(f"Tried to select {picker_aria_label.lower()}: {option_label}, but got empty string. This is probably because the pane is too small and the responsive UI is not displaying the results.")
             raise RuntimeError(f"Tried to select {picker_aria_label.lower()}: {option_label}, but got: {selected}")
 
     async def pick_copilot_model_helper(self, model_label=None):
