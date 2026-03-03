@@ -315,22 +315,29 @@ class AutoVSCodeCopilot:
         await expect(remote).not_to_contain_text(Constants.REMOTE_OPENING_TEXT, timeout=Constants.TIMEOUT_LONG)
         logger.debug(f'opening remote alert not present now: {await remote.text_content()}')
 
-        # Wait for Copilot Chat extension to be installed (important for devcontainer scenarios)
-        logger.debug('Waiting for Copilot Chat extension to be installed...')
-        try:
-            await asyncio.wait_for(self.copilot_chat_installed.wait(), timeout=Constants.TIMEOUT_MID / 1000)
-            logger.debug('Copilot Chat extension is installed')
-        except TimeoutError:
-            # Ed doesn't know why, but sometimes we just don't see these events.
-            logger.debug('Timeout waiting for Copilot Chat extension installation event. Continuing anyway...')
+        # When using the devcontainer with zfailer, code uses some very slow and
+        # unreliable process to install extensions.  But when not using zfailer,
+        # it doesn't install the extensions and so we don't see the installation
+        # messages.  For now we'll just disable it and rely on zfailer not
+        # mitming.
 
-        # Wait for OAI-compatible Copilot extension to be installed
-        logger.debug("Waiting for OAI-compatible Copilot extension to be installed...")
-        try:
-            await asyncio.wait_for(self.oai_compatible_copilot_installed.wait(), timeout=Constants.TIMEOUT_MID / 1000)
-            logger.debug("OAI-compatible Copilot extension is installed")
-        except TimeoutError:
-            logger.debug("Timeout waiting for OAI-compatible Copilot extension installation event. Continuing anyway...")
+        if False:
+            # Wait for Copilot Chat extension to be installed (important for devcontainer scenarios)
+            logger.debug('Waiting for Copilot Chat extension to be installed...')
+            try:
+                await asyncio.wait_for(self.copilot_chat_installed.wait(), timeout=Constants.TIMEOUT_MID / 1000)
+                logger.debug('Copilot Chat extension is installed')
+            except TimeoutError:
+                # Ed doesn't know why, but sometimes we just don't see these events.
+                logger.debug('Timeout waiting for Copilot Chat extension installation event. Continuing anyway...')
+
+            # Wait for OAI-compatible Copilot extension to be installed
+            logger.debug("Waiting for OAI-compatible Copilot extension to be installed...")
+            try:
+                await asyncio.wait_for(self.oai_compatible_copilot_installed.wait(), timeout=Constants.TIMEOUT_MID / 1000)
+                logger.debug("OAI-compatible Copilot extension is installed")
+            except TimeoutError:
+                logger.debug("Timeout waiting for OAI-compatible Copilot extension installation event. Continuing anyway...")
 
         # Check if chat window is already visible
         input_locator = self.page.locator(Constants.SELECTOR_CHAT_INPUT_CONTAINER)
