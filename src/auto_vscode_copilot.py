@@ -1318,8 +1318,21 @@ class AutoVSCodeCopilot:
                 return
             except PlaywrightTimeoutError as e:
                 if attempt == attempts - 1:
+                    options_seen_text = "<none>"
+                    try:
+                        if await context_locator.is_visible():
+                            options_seen = [
+                                option.strip()
+                                for option in await context_locator.locator('div.monaco-list-row.action > span.title').all_inner_texts()
+                                if option.strip()
+                            ]
+                            if options_seen:
+                                options_seen_text = ", ".join(options_seen)
+                    except PlaywrightError:
+                        logger.debug("Unable to read model picker options while building timeout error.")
                     raise RuntimeError(
-                        f"Model option '{model_label}' was not present in the model picker after {attempts} attempts."
+                        f"Model option '{model_label}' was not present in the model picker after {attempts} attempts. "
+                        f"Options seen: {options_seen_text}"
                     ) from e
                 # If the picker list is left open after a failed attempt, close it before retrying.
                 try:
