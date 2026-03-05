@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import requests
 import socket
 import time
@@ -62,6 +63,7 @@ class Constants:
     SELECTOR_WORKBENCH = '.monaco-workbench'
     SELECTOR_CHAT_INPUT_CONTAINER = 'div.chat-input-container div.interactive-input-editor'
     SELECTOR_SEND_BUTTON = 'a.action-label.codicon.codicon-send'
+    SELECTOR_CHAT_WIDGET = 'div.chat-widget'
     SELECTOR_INTERACTIVE_SESSION = 'div.interactive-session'
     SELECTOR_CHAT_RESPONSE_LOADING = 'div.chat-response-loading'
     SELECTOR_CHAT_LIST = 'div.monaco-list[aria-label="Chat"]'
@@ -69,6 +71,14 @@ class Constants:
     SELECTOR_CANCEL_BUTTON_ROLE = ("button", "Cancel (Ctrl+Escape)", True)
     SELECTOR_CONTINUE_BUTTON = 'div.chat-confirmation-widget-buttons a.monaco-button'
     SELECTOR_CONTINUE_ITERATING_BUTTON = 'div.chat-buttons a.monaco-button'
+    SELECTOR_QUESTION_WIDGET = 'div.chat-question-carousel-container'
+    SELECTOR_QUESTION_TITLE = 'div.chat-question-carousel-container .chat-question-title'
+    SELECTOR_QUESTION_OPTION = 'div.chat-question-carousel-container .chat-question-list-item'
+    SELECTOR_QUESTION_OPTION_TITLE = '.chat-question-list-label-title'
+    SELECTOR_QUESTION_OPTION_DESC = '.chat-question-list-label-desc'
+    SELECTOR_QUESTION_FREEFORM = 'div.chat-question-carousel-container textarea.chat-question-freeform-textarea'
+    SELECTOR_QUESTION_SUBMIT_BUTTON = 'div.chat-question-carousel-container a.chat-question-nav-submit'
+    SELECTOR_QUESTION_CLOSE_BUTTON = 'div.chat-question-carousel-container a.chat-question-close'
     SELECTOR_ERROR_OVERLAY = 'div.notifications-toasts.visible div.notification-list-item'
     # Selector for the "Try Again" chat error button inside the most recent response
     SELECTOR_CHAT_ERROR = 'div.interactive-response.chat-most-recent-response div.chat-error-confirmation a.monaco-text-button'
@@ -432,10 +442,155 @@ class AutoVSCodeCopilot:
         #logger.debug("Waiting for the send button to disappear...")
         #await send_button_locator.wait_for(state='hidden', timeout=Constants.TIMEOUT_SEND_BUTTON_HIDDEN)
 
+    async def _get_visible_question_widget(self):
+        if not self.page:
+            raise RuntimeError('VS Code not launched. Call launch() first.')
+        widget = self.page.locator(Constants.SELECTOR_QUESTION_WIDGET).filter(visible=True)
+        if await widget.count() == 0:
+            return None
+        return widget.first
+
+    async def _read_visible_question_widget(self):
+        """Return visible question metadata, or None when no question is shown."""
+        widget = await self._get_visible_question_widget()
+        if widget is None:
+            return None
+
+        title = ""
+        title_locator = widget.locator(Constants.SELECTOR_QUESTION_TITLE)
+        if await title_locator.count() > 0:
+            title = (await title_locator.first.inner_text()).strip()
+
+        options = []
+        option_locator = widget.locator(Constants.SELECTOR_QUESTION_OPTION)
+        option_count = await option_locator.count()
+        for i in range(option_count):
+            option = option_locator.nth(i)
+            if not await option.is_visible():
+                continue
+            option_title = ""
+            option_desc = ""
+            option_title_locator = option.locator(Constants.SELECTOR_QUESTION_OPTION_TITLE)
+            option_desc_locator = option.locator(Constants.SELECTOR_QUESTION_OPTION_DESC)
+            if await option_title_locator.count() > 0:
+                option_title = (await option_title_locator.first.inner_text()).strip()
+            if await option_desc_locator.count() > 0:
+                option_desc = (await option_desc_locator.first.inner_text()).strip().lstrip(":").strip()
+            if option_title:
+                options.append({
+                    "index": len(options) + 1,
+                    "title": option_title,
+                    "description": option_desc,
+                })
+
+        return {
+            "title": title,
+            "options": options,
+        }
+
+    def _format_question_for_user(self, question):
+        lines = []
+        title = (question.get("title") or "").strip()
+        if title:
+            lines.append(f"Question: {title}")
+        else:
+            lines.append("Question: Please choose an option.")
+
+        options = question.get("options") or []
+        if options:
+            lines.append("Options:")
+            for opt in options:
+                desc = opt.get("description", "").strip()
+                if desc:
+                    lines.append(f"{opt['index']}. {opt['title']}: {desc}")
+                else:
+                    lines.append(f"{opt['index']}. {opt['title']}")
+
+        lines.append("Reply with an option number, option title, or a custom answer.")
+        return "\n".join(lines)
+
+    async def _close_visible_question_widget(self):
+        """Close visible question widget using 'Skip all questions' action."""
+        widget = await self._get_visible_question_widget()
+        if widget is None:
+            return False
+
+        close_btn = widget.locator(Constants.SELECTOR_QUESTION_CLOSE_BUTTON).filter(visible=True)
+        if await close_btn.count() == 0:
+            return False
+
+        await close_btn.first.click(force=True, timeout=Constants.TIMEOUT_LONG)
+        await asyncio.sleep(Constants.WAIT_AFTER_CLICK)
+        try:
+            await widget.wait_for(state='hidden', timeout=Constants.TIMEOUT_SHORT)
+        except PlaywrightTimeoutError:
+            # Non-fatal; caller decides fallback behavior.
+            pass
+        return await self._get_visible_question_widget() is None
+
+    async def _answer_visible_question_widget(self, answer_text: str):
+        """
+        Answer a visible question widget using simulated user text.
+        Matches by option number/title, otherwise sends a freeform answer.
+        """
+        widget = await self._get_visible_question_widget()
+        if widget is None:
+            raise RuntimeError("Expected question widget, but none is visible.")
+
+        question = await self._read_visible_question_widget()
+        options = (question or {}).get("options", [])
+        normalized_answer = " ".join((answer_text or "").strip().lower().split())
+        if not normalized_answer:
+            raise RuntimeError("Cannot answer question with an empty response.")
+
+        selected = False
+        visible_options = widget.locator(Constants.SELECTOR_QUESTION_OPTION).filter(visible=True)
+
+        number_match = re.search(r"\b([1-9][0-9]*)\b", normalized_answer)
+        if number_match:
+            idx = int(number_match.group(1))
+            if 1 <= idx <= len(options):
+                option_locator = visible_options.nth(idx - 1)
+                await option_locator.click(force=True, timeout=Constants.TIMEOUT_OPTION_CLICK)
+                selected = True
+
+        if not selected:
+            for i, opt in enumerate(options):
+                title = (opt.get("title") or "").strip().lower()
+                if title and title in normalized_answer:
+                    option_locator = visible_options.nth(i)
+                    await option_locator.click(force=True, timeout=Constants.TIMEOUT_OPTION_CLICK)
+                    selected = True
+                    break
+
+        if not selected:
+            freeform = widget.locator(Constants.SELECTOR_QUESTION_FREEFORM)
+            if await freeform.count() == 0:
+                raise RuntimeError(
+                    "No matching question option found and freeform input is unavailable."
+                )
+            await freeform.first.fill(answer_text)
+
+        submit = widget.locator(Constants.SELECTOR_QUESTION_SUBMIT_BUTTON).filter(visible=True)
+        if await submit.count() == 0:
+            raise RuntimeError("Question widget is visible, but Submit is not.")
+        await submit.first.click(force=True, timeout=Constants.TIMEOUT_LONG)
+        await asyncio.sleep(Constants.WAIT_AFTER_CLICK)
+
     async def send_chat_message(self, message, model_label='GPT-4.1', mode_label='Agent'):
         if not self.page:
             raise RuntimeError('VS Code not launched. Call launch() first.')
         logger.debug(f'📝 Writing and sending chat message: "{message}" (model: {model_label}, mode: {mode_label})')
+
+        question = await self._read_visible_question_widget()
+        if question is not None:
+            logger.debug("Question widget visible before send; attempting to close and continue in chat.")
+            closed = await self._close_visible_question_widget()
+            if not closed:
+                logger.warning("Failed to close question widget; falling back to answering it directly.")
+                await self._answer_visible_question_widget(message)
+                logger.debug('✅ Question answer submitted successfully!')
+                return True
 
         await self.pick_copilot_model_helper(model_label)
         await self.pick_copilot_mode_helper(mode_label)
@@ -868,6 +1023,8 @@ class AutoVSCodeCopilot:
                     const isConfirmation = () => !!Array.from(document.querySelectorAll('{Constants.SELECTOR_CONTINUE_BUTTON}, {Constants.SELECTOR_CONTINUE_ITERATING_BUTTON}'))
                         .filter(el => el.offsetParent !== null)
                         .find(el => {Constants.CONTINUE_BUTTON_TEXT}.includes(el.innerText.trim()));
+                    const isQuestion = () => !!Array.from(document.querySelectorAll('{Constants.SELECTOR_QUESTION_WIDGET}'))
+                        .find(el => el.offsetParent !== null);
                     const isErrorOverlay = () => !!document.querySelector('{Constants.SELECTOR_ERROR_OVERLAY}');
                     const isChatError = () => {{
                         const nodes = Array.from(document.querySelectorAll('{Constants.SELECTOR_CHAT_ERROR}'));
@@ -884,19 +1041,20 @@ class AutoVSCodeCopilot:
                         //console.log('Checking chat state: loading, confirmation, errorDialog, toolLoading...');
                         const loading = isLoading();
                         const confirmation = isConfirmation();
+                        const question = isQuestion();
                         const errorOverlay = isErrorOverlay();
                         const chatError = isChatError();
                         
                         // If there's no loading, confirmation, or error state, consider chat ready
-                        if (!loading && !confirmation && !errorOverlay && !chatError) {{
+                        if (!loading && !confirmation && !question && !errorOverlay && !chatError) {{
                             // Return immediately when chat is observed to be idle/no dialogs —
                             // removing the previous multi-observation "stabilization" logic.
-                            return {{ loading: false, confirmation, errorOverlay, chatError, timeout: false, toolLoading: currentToolLoading }};
+                            return {{ loading: false, confirmation, question, errorOverlay, chatError, timeout: false, toolLoading: currentToolLoading }};
                         }}
                         
-                        if (confirmation || errorOverlay || chatError) {{
+                        if (confirmation || question || errorOverlay || chatError) {{
                             console.log('Chat state determined');
-                            return {{ loading, confirmation, errorOverlay, chatError, timeout: false, toolLoading: currentToolLoading }};
+                            return {{ loading, confirmation, question, errorOverlay, chatError, timeout: false, toolLoading: currentToolLoading }};
                         }}
                         
                         console.log('Chat state not determined, continuing...');
@@ -921,7 +1079,7 @@ class AutoVSCodeCopilot:
                         return await new Promise(async (resolve, reject) => {{
                             const setTimer = () => {{
                                 timer = setTimeout(() => {{
-                                    resolve({{ loading: false, confirmation: false, errorOverlay: false, chatError: false, timeout: true, toolLoading: currentToolLoading }});
+                                    resolve({{ loading: false, confirmation: false, question: false, errorOverlay: false, chatError: false, timeout: true, toolLoading: currentToolLoading }});
                                 }}, currentTimeout);
                             }};
 
@@ -944,11 +1102,11 @@ class AutoVSCodeCopilot:
 
                             observer = new MutationObserver(handleMutation);
                             
-                            // Narrow scope to chat session container to reduce interference
-                            const chatContainer = document.querySelector('{Constants.SELECTOR_INTERACTIVE_SESSION}');
+                            // Observe the full chat widget so question carousel changes are captured.
+                            const chatContainer = document.querySelector('{Constants.SELECTOR_CHAT_WIDGET}') || document.querySelector('{Constants.SELECTOR_INTERACTIVE_SESSION}');
                             if (!chatContainer) {{
                                 console.error('Chat container not found');
-                                return resolve({{ loading: false, confirmation: false, errorOverlay: false, chatError: false, timeout: true, toolLoading: currentToolLoading }});
+                                return resolve({{ loading: false, confirmation: false, question: false, errorOverlay: false, chatError: false, timeout: true, toolLoading: currentToolLoading }});
                             }}
                             
                             observer.observe(chatContainer, {{ childList: true, subtree: true, attributes: true }});
@@ -961,7 +1119,7 @@ class AutoVSCodeCopilot:
                 }}
             """)
 
-            logger.debug(f"Chat state: loading={state.get('loading')}, confirmation={state.get('confirmation')}, errorOverlay={state.get('errorOverlay')}, chatError={state.get('chatError')}, timeout={state.get('timeout')}, toolLoading={state.get('toolLoading')}")
+            logger.debug(f"Chat state: loading={state.get('loading')}, confirmation={state.get('confirmation')}, question={state.get('question')}, errorOverlay={state.get('errorOverlay')}, chatError={state.get('chatError')}, timeout={state.get('timeout')}, toolLoading={state.get('toolLoading')}")
 
             loading = await self.page.locator(Constants.SELECTOR_CHAT_RESPONSE_LOADING).all()
             logger.debug(f"Loading indicators found: {len(loading)}")
@@ -997,6 +1155,10 @@ class AutoVSCodeCopilot:
                 await self._click_confirmation_buttons_recursively()
                 continue  # Re-check state after handling
 
+            if state.get("question"):
+                logger.debug("Question prompt detected, returning control to simulated user.")
+                break
+
             if state.get("chatError"):
                 logger.debug("Chat error detected (Try Again), clicking Try Again button...")
                 await self._click_chat_error_try_again()
@@ -1011,15 +1173,17 @@ class AutoVSCodeCopilot:
             logger.debug("Chat loading complete, no confirmation or error needed. Starting message extraction...")
             break
 
-        # Sanity check: Make sure that the send button is visible again
-        try:
-            await self.page.locator(Constants.SELECTOR_SEND_BUTTON).wait_for(state='visible', timeout=10000)
-        except PlaywrightTimeoutError:
-            logger.warning("Send button not visible???")
-            await self.take_screenshot("/tmp/send-button-not-visible.png")
-            import pdb
-            pdb.set_trace()
-            raise RuntimeError("Send button not visible")
+        # Sanity check: send button may be hidden when question widget is active.
+        question_visible = await self._get_visible_question_widget()
+        if question_visible is None:
+            try:
+                await self.page.locator(Constants.SELECTOR_SEND_BUTTON).wait_for(state='visible', timeout=10000)
+            except PlaywrightTimeoutError:
+                logger.warning("Send button not visible after extraction state settled.")
+                await self.take_screenshot("/tmp/send-button-not-visible.png")
+                raise RuntimeError("Send button not visible")
+        else:
+            logger.debug("Skipping send-button visibility check because a question widget is visible.")
 
         # Final extraction
         logger.debug("Calling _extract_chat_messages_helper for final extraction...")
@@ -1027,6 +1191,22 @@ class AutoVSCodeCopilot:
         logger.debug(f"Extracted {len(messages)} total messages")
         if messages:
             logger.debug(f"Last msg: {messages[-1]['text']}")
+
+        question = await self._read_visible_question_widget()
+        if question is not None:
+            question_text = self._format_question_for_user(question)
+            if not messages or messages[-1].get("text") != question_text:
+                row_id = messages[-1].get("rowId", "0") if messages else "0"
+                question_msg = {
+                    "entity": "assistant",
+                    "message": question_text,
+                    "text": question_text,
+                    "html": "",
+                    "rowId": row_id,
+                }
+                messages.append(question_msg)
+                self.previously_extracted_messages = messages
+                logger.debug("Added synthetic assistant question message for simulated user.")
 
         return messages
 
@@ -1074,6 +1254,8 @@ class AutoVSCodeCopilot:
                     const isConfirmation = () => !!Array.from(document.querySelectorAll('{Constants.SELECTOR_CONTINUE_BUTTON}, {Constants.SELECTOR_CONTINUE_ITERATING_BUTTON}'))
                         .filter(el => el.offsetParent !== null)
                         .find(el => {Constants.CONTINUE_BUTTON_TEXT}.includes(el.innerText.trim()));
+                    const isQuestion = () => !!Array.from(document.querySelectorAll('{Constants.SELECTOR_QUESTION_WIDGET}'))
+                        .find(el => el.offsetParent !== null);
                     const isErrorOverlay = () => !!document.querySelector('{Constants.SELECTOR_ERROR_OVERLAY}');
                     const isChatError = () => {{
                         const nodes = Array.from(document.querySelectorAll('{Constants.SELECTOR_CHAT_ERROR}'));
@@ -1090,19 +1272,20 @@ class AutoVSCodeCopilot:
                         //console.log('Checking chat state: loading, confirmation, errorDialog, toolLoading...');
                         const loading = isLoading();
                         const confirmation = isConfirmation();
+                        const question = isQuestion();
                         const errorOverlay = isErrorOverlay();
                         const chatError = isChatError();
                         
                         // If there's no loading, confirmation, or error state, consider chat ready
-                        if (!loading && !confirmation && !errorOverlay && !chatError) {{
+                        if (!loading && !confirmation && !question && !errorOverlay && !chatError) {{
                             // Return immediately when chat is observed to be idle/no dialogs —
                             // removing the previous multi-observation "stabilization" logic.
-                            return {{ loading: false, confirmation, errorOverlay, chatError, timeout: false, toolLoading: currentToolLoading }};
+                            return {{ loading: false, confirmation, question, errorOverlay, chatError, timeout: false, toolLoading: currentToolLoading }};
                         }}
                         
-                        if (confirmation || errorOverlay || chatError) {{
+                        if (confirmation || question || errorOverlay || chatError) {{
                             console.log('Chat state determined');
-                            return {{ loading, confirmation, errorOverlay, chatError, timeout: false, toolLoading: currentToolLoading }};
+                            return {{ loading, confirmation, question, errorOverlay, chatError, timeout: false, toolLoading: currentToolLoading }};
                         }}
                         
                         console.log('Chat state not determined, continuing...');
@@ -1127,7 +1310,7 @@ class AutoVSCodeCopilot:
                         return await new Promise(async (resolve, reject) => {{
                             const setTimer = () => {{
                                 timer = setTimeout(() => {{
-                                    resolve({{ loading: false, confirmation: false, errorOverlay: false, chatError: false, timeout: true, toolLoading: currentToolLoading }});
+                                    resolve({{ loading: false, confirmation: false, question: false, errorOverlay: false, chatError: false, timeout: true, toolLoading: currentToolLoading }});
                                 }}, currentTimeout);
                             }};
 
@@ -1150,11 +1333,11 @@ class AutoVSCodeCopilot:
 
                             observer = new MutationObserver(handleMutation);
                             
-                            // Narrow scope to chat session container to reduce interference
-                            const chatContainer = document.querySelector('{Constants.SELECTOR_INTERACTIVE_SESSION}');
+                            // Observe the full chat widget so question carousel changes are captured.
+                            const chatContainer = document.querySelector('{Constants.SELECTOR_CHAT_WIDGET}') || document.querySelector('{Constants.SELECTOR_INTERACTIVE_SESSION}');
                             if (!chatContainer) {{
                                 console.error('Chat container not found');
-                                return resolve({{ loading: false, confirmation: false, errorOverlay: false, chatError: false, timeout: true, toolLoading: currentToolLoading }});
+                                return resolve({{ loading: false, confirmation: false, question: false, errorOverlay: false, chatError: false, timeout: true, toolLoading: currentToolLoading }});
                             }}
                             
                             observer.observe(chatContainer, {{ childList: true, subtree: true, attributes: true }});
@@ -1167,7 +1350,7 @@ class AutoVSCodeCopilot:
                 }}
             """)
 
-            logger.debug(f"Chat state: loading={state.get('loading')}, confirmation={state.get('confirmation')}, errorOverlay={state.get('errorOverlay')}, chatError={state.get('chatError')}, timeout={state.get('timeout')}, toolLoading={state.get('toolLoading')}")
+            logger.debug(f"Chat state: loading={state.get('loading')}, confirmation={state.get('confirmation')}, question={state.get('question')}, errorOverlay={state.get('errorOverlay')}, chatError={state.get('chatError')}, timeout={state.get('timeout')}, toolLoading={state.get('toolLoading')}")
 
             loading = await self.page.locator(Constants.SELECTOR_CHAT_RESPONSE_LOADING).all()
             logger.debug(f"Loading indicators found: {len(loading)}")
@@ -1203,6 +1386,10 @@ class AutoVSCodeCopilot:
                 await self._click_confirmation_buttons_recursively()
                 continue  # Re-check state after handling
 
+            if state.get("question"):
+                logger.debug("Question prompt detected, returning control to simulated user.")
+                break
+
             if state.get("chatError"):
                 logger.debug("Chat error detected (Try Again), clicking Try Again button...")
                 await self._click_chat_error_try_again()
@@ -1217,15 +1404,17 @@ class AutoVSCodeCopilot:
             logger.debug("Chat loading complete, no confirmation or error needed. Starting message extraction...")
             break
 
-        # Sanity check: Make sure that the send button is visible again
-        try:
-            await self.page.locator(Constants.SELECTOR_SEND_BUTTON).wait_for(state='visible', timeout=10000)
-        except PlaywrightTimeoutError:
-            logger.warning("Send button not visible???")
-            await self.take_screenshot("/tmp/send-button-not-visible.png")
-            import pdb
-            pdb.set_trace()
-            raise RuntimeError("Send button not visible")
+        # Sanity check: send button may be hidden when question widget is active.
+        question_visible = await self._get_visible_question_widget()
+        if question_visible is None:
+            try:
+                await self.page.locator(Constants.SELECTOR_SEND_BUTTON).wait_for(state='visible', timeout=10000)
+            except PlaywrightTimeoutError:
+                logger.warning("Send button not visible after extraction state settled.")
+                await self.take_screenshot("/tmp/send-button-not-visible.png")
+                raise RuntimeError("Send button not visible")
+        else:
+            logger.debug("Skipping send-button visibility check because a question widget is visible.")
 
         # Final extraction
         logger.debug("Calling _extract_chat_messages_helper for final extraction...")
@@ -1233,6 +1422,22 @@ class AutoVSCodeCopilot:
         logger.debug(f"Extracted {len(messages)} total messages")
         if messages:
             logger.debug(f"Last msg: {messages[-1]['text']}")
+
+        question = await self._read_visible_question_widget()
+        if question is not None:
+            question_text = self._format_question_for_user(question)
+            if not messages or messages[-1].get("text") != question_text:
+                row_id = messages[-1].get("rowId", "0") if messages else "0"
+                question_msg = {
+                    "entity": "assistant",
+                    "message": question_text,
+                    "text": question_text,
+                    "html": "",
+                    "rowId": row_id,
+                }
+                messages.append(question_msg)
+                self.previously_extracted_messages = messages
+                logger.debug("Added synthetic assistant question message for simulated user.")
 
         # Scroll back to bottom after extraction
         await self._scroll_to_bottom()
