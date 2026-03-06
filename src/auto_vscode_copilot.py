@@ -64,7 +64,8 @@ class Constants:
     # Selectors
     SELECTOR_WORKBENCH = '.monaco-workbench'
     SELECTOR_CHAT_INPUT_CONTAINER = 'div.chat-input-container div.interactive-input-editor'
-    SELECTOR_SEND_BUTTON = 'a.action-label.codicon.codicon-send:not(.disabled)'
+    SELECTOR_SEND_BUTTON = 'a.action-label.codicon.codicon-send'
+    SELECTOR_SEND_BUTTON_ENABLED = 'a.action-label.codicon.codicon-send:not(.disabled)'
     SELECTOR_CHAT_WIDGET = 'div.chat-widget'
     SELECTOR_INTERACTIVE_SESSION = 'div.interactive-session'
     SELECTOR_CHAT_RESPONSE_LOADING = 'div.chat-response-loading'
@@ -399,7 +400,7 @@ class AutoVSCodeCopilot:
         logger.debug('Waiting for either trust dialog or send button to disappear...')
         trust_locator = self.page.get_by_role(role=Constants.SELECTOR_TRUST_BUTTON_ROLE[0], name=Constants.SELECTOR_TRUST_BUTTON_ROLE[1], exact=Constants.SELECTOR_TRUST_BUTTON_ROLE[2])
         trust_locator_visible = asyncio.create_task(trust_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_SEND_BUTTON_HIDDEN), name="trust_locator_visible")
-        send_button_disappears = asyncio.create_task(send_button_locator.wait_for(state='hidden', timeout=Constants.TIMEOUT_SEND_BUTTON_HIDDEN), name="send_button_disappears")
+        send_button_disappears = asyncio.create_task(self.page.locator(Constants.SELECTOR_SEND_BUTTON_ENABLED).wait_for(state='hidden', timeout=Constants.TIMEOUT_SEND_BUTTON_HIDDEN), name="send_button_disappears")
 
         try:
             done, pending = await asyncio.wait([trust_locator_visible, send_button_disappears], return_when=asyncio.FIRST_COMPLETED)
