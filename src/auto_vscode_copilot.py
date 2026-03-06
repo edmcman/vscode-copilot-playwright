@@ -47,6 +47,8 @@ class Constants:
     # choose slightly longer than that.
     TIMEOUT_SAFETY = 11*60*1000
     TIMEOUT_TOOL_LOADING = 30000
+    RETRY_DELAY_MIN = 10
+    RETRY_DELAY_MAX = 5 * 60
     TIMEOUT_SCROLL = 100
     TIMEOUT_SCROLL_DOWN = 200
 
@@ -1024,6 +1026,7 @@ class AutoVSCodeCopilot:
         logger.debug("Starting extract_all_chat_messages with confirmation/loading/error handling...")
         await self.page.wait_for_load_state('domcontentloaded')
         iteration = 0
+        try_again_attempts = 0
 
         while True:
             iteration += 1
@@ -1180,7 +1183,10 @@ class AutoVSCodeCopilot:
                 break
 
             if state.get("chatError"):
-                logger.debug("Chat error detected (Try Again), clicking Try Again button...")
+                delay = min(Constants.RETRY_DELAY_MAX, Constants.RETRY_DELAY_MIN * 2 ** try_again_attempts)
+                logger.debug(f"Chat error detected (Try Again), waiting {delay}s before retrying (attempt {try_again_attempts})...")
+                await asyncio.sleep(delay)
+                try_again_attempts += 1
                 await self._click_chat_error_try_again()
                 continue
 
