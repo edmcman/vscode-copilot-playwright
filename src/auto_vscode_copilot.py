@@ -62,7 +62,7 @@ class Constants:
     # Selectors
     SELECTOR_WORKBENCH = '.monaco-workbench'
     SELECTOR_CHAT_INPUT_CONTAINER = 'div.chat-input-container div.interactive-input-editor'
-    SELECTOR_SEND_BUTTON = 'a.action-label.codicon.codicon-send'
+    SELECTOR_SEND_BUTTON = 'a.action-label.codicon.codicon-send:not(.disabled)'
     SELECTOR_CHAT_WIDGET = 'div.chat-widget'
     SELECTOR_INTERACTIVE_SESSION = 'div.interactive-session'
     SELECTOR_CHAT_RESPONSE_LOADING = 'div.chat-response-loading'
