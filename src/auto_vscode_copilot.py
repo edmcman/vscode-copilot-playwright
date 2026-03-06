@@ -994,6 +994,12 @@ class AutoVSCodeCopilot:
                 await button.click(force=True)
             except PlaywrightTimeoutError:
                 logger.warning("Timeout while clicking confirmation button, retrying...")
+            except PlaywrightError as e:
+                if "not visible" in str(e):
+                    logger.warning(f"Confirmation button '{text}' is not visible (likely scrolled out of Monaco virtual list), skipping.")
+                    continue
+                else:
+                    raise
             await asyncio.sleep(Constants.WAIT_AFTER_CLICK)
             await self._click_confirmation_buttons_recursively(first_invocation=False)
             return
