@@ -975,7 +975,7 @@ class AutoVSCodeCopilot:
     async def _click_confirmation_buttons_recursively(self, first_invocation=True):
         """Recursively click confirmation buttons until none remain."""
         assert self.page is not None, "VS Code not launched. Call launch() first."
-        locator = self.page.locator(f"{Constants.SELECTOR_CONTINUE_BUTTON}, {Constants.SELECTOR_CONTINUE_ITERATING_BUTTON}").filter(visible=True)
+        locator = self.page.locator(f"{Constants.SELECTOR_CONTINUE_BUTTON}, {Constants.SELECTOR_CONTINUE_ITERATING_BUTTON}")
         count = await locator.count()
 
         if count == 0:
