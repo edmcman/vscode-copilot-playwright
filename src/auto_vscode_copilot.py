@@ -975,22 +975,30 @@ class AutoVSCodeCopilot:
     async def _click_confirmation_buttons_recursively(self, first_invocation=True):
         """Recursively click confirmation buttons until none remain."""
         assert self.page is not None, "VS Code not launched. Call launch() first."
-        buttons = await self.page.locator(f"{Constants.SELECTOR_CONTINUE_BUTTON}, {Constants.SELECTOR_CONTINUE_ITERATING_BUTTON}").filter(visible=True).all()
-        valid_buttons = [b for b in buttons if await b.inner_text() in Constants.CONTINUE_BUTTON_TEXT]
+        locator = self.page.locator(f"{Constants.SELECTOR_CONTINUE_BUTTON}, {Constants.SELECTOR_CONTINUE_ITERATING_BUTTON}").filter(visible=True)
+        count = await locator.count()
 
-        if not valid_buttons:
+        if count == 0:
             if first_invocation:
                 logger.warning("No visible confirmation buttons found.")
                 raise RuntimeError("No visible confirmation buttons found.")
             return
 
-        logger.debug(f"Clicking confirmation button with text: '{await valid_buttons[-1].inner_text()}'")
+        last_button = locator.nth(count - 1)
+        text = await last_button.inner_text()
+        if text not in Constants.CONTINUE_BUTTON_TEXT:
+            if first_invocation:
+                logger.warning("No visible confirmation buttons found.")
+                raise RuntimeError("No visible confirmation buttons found.")
+            return
+
+        logger.debug(f"Clicking confirmation button with text: '{text}'")
         try:
-            await valid_buttons[-1].click(force=True)
+            await last_button.click(force=True)
         except PlaywrightTimeoutError:
             logger.warning("Timeout while clicking confirmation button, retrying...")
         await asyncio.sleep(Constants.WAIT_AFTER_CLICK)
-        
+
         await self._click_confirmation_buttons_recursively(first_invocation=False)
 
     async def extract_all_chat_messages(self):
