@@ -525,10 +525,10 @@ class AutoVSCodeCopilot:
         await close_btn.first.click(force=True, timeout=Constants.TIMEOUT_LONG)
         await asyncio.sleep(Constants.WAIT_AFTER_CLICK)
         try:
-            await widget.wait_for(state='hidden', timeout=Constants.TIMEOUT_SHORT)
+            await widget.wait_for(state='hidden', timeout=Constants.TIMEOUT_MID)
         except PlaywrightTimeoutError:
             # Non-fatal; caller decides fallback behavior.
-            pass
+            logger.warning("Question widget close button clicked, but widget is still visible after waiting.")
         return await self._get_visible_question_widget() is None
 
     async def _answer_visible_question_widget(self, answer_text: str):
@@ -590,10 +590,11 @@ class AutoVSCodeCopilot:
             logger.debug("Question widget visible before send; attempting to close and continue in chat.")
             closed = await self._close_visible_question_widget()
             if not closed:
-                logger.warning("Failed to close question widget; falling back to answering it directly.")
-                await self._answer_visible_question_widget(message)
-                logger.debug('✅ Question answer submitted successfully!')
-                return True
+                raise RuntimeError("Failed to close question widget; it is still visible. Cannot proceed with sending chat message.")
+                #logger.warning("Failed to close question widget; falling back to answering it directly.")
+                #await self._answer_visible_question_widget(message)
+                #logger.debug('✅ Question answer submitted successfully!')
+                #return True
 
         await self.pick_copilot_model_helper(model_label)
         await self.pick_copilot_mode_helper(mode_label)
