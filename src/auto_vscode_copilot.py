@@ -89,7 +89,7 @@ class Constants:
     SELECTOR_STOP_CIRCLE = '.codicon-stop-circle'
     SELECTOR_PICKER_OPTION = 'div.monaco-list-row.action > span.title'
     SELECTOR_PICKER_OTHER_MODELS = 'div.monaco-list-row.action > span.title:has-text("Other Models")'
-    CONTINUE_BUTTON_TEXT = ["Allow", "Continue", "Allow and Review", "Allow Once"]
+    CONTINUE_BUTTON_TEXT = ["Allow", "Continue", "Allow and Review", "Allow Once", "Allow in this Session"]
     STUCK_MESSAGE = f"Your command took longer than {TIMEOUT_TOOL_LOADING/1000} seconds so I stopped it. I can't interact with terminal commands."
     REMOTE_OPENING_TEXT = "Opening Remote..."
     LOCATOR_SELECTORS = {
