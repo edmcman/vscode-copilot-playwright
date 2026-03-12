@@ -64,8 +64,8 @@ class Constants:
     # Selectors
     SELECTOR_WORKBENCH = '.monaco-workbench'
     SELECTOR_CHAT_INPUT_CONTAINER = 'div.chat-input-container div.interactive-input-editor'
-    SELECTOR_SEND_BUTTON = 'a.action-label[aria-label="Send"]'
-    SELECTOR_SEND_BUTTON_ENABLED = 'a.action-label[aria-label="Send"]:not(.disabled)'
+    SELECTOR_SEND_BUTTON = 'div.chat-execute-toolbar a.action-label.codicon'
+    SELECTOR_SEND_BUTTON_ENABLED = 'div.chat-execute-toolbar a.action-label.codicon:not(.disabled)'
     SELECTOR_CHAT_WIDGET = 'div.chat-widget'
     SELECTOR_INTERACTIVE_SESSION = 'div.interactive-session'
     SELECTOR_CHAT_RESPONSE_LOADING = 'div.chat-response-loading'
