@@ -1306,7 +1306,14 @@ class AutoVSCodeCopilot:
         context_locator = self.page.locator('div.context-view div.monaco-list')
         await context_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_CONTEXT_LOCATOR)
         option_locator = context_locator.locator(f'div.monaco-list-row.action > span.title:has-text({json.dumps(option_label)})')
-        await option_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_OPTION_LOCATOR_VISIBLE)
+        # If the option isn't directly visible, try clicking "Other Models" to expand hidden options
+        try:
+            await option_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_OPTION_LOCATOR_VISIBLE)
+        except PlaywrightTimeoutError:
+            other_models_locator = context_locator.locator('div.monaco-list-row.action > span.title:has-text("Other Models")')
+            await other_models_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_OPTION_LOCATOR_VISIBLE)
+            await other_models_locator.click(force=True, timeout=Constants.TIMEOUT_OPTION_CLICK)
+            await option_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_OPTION_LOCATOR_VISIBLE)
         await option_locator.click(force=True, timeout=Constants.TIMEOUT_OPTION_CLICK)
         selected = await picker_locator.inner_text()
         if selected != option_label:
