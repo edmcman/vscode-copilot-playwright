@@ -87,6 +87,8 @@ class Constants:
     SELECTOR_CHAT_ERROR = 'div.interactive-response.chat-most-recent-response div.chat-error-confirmation a.monaco-text-button'
     SELECTOR_TERMINAL_CMD_LOADING = 'div.interactive-response div.chat-tool-invocation-part:has(.codicon-loading):has(.chat-terminal-content-part)'
     SELECTOR_STOP_CIRCLE = '.codicon-stop-circle'
+    SELECTOR_PICKER_OPTION = 'div.monaco-list-row.action > span.title'
+    SELECTOR_PICKER_OTHER_MODELS = 'div.monaco-list-row.action > span.title:has-text("Other Models")'
     CONTINUE_BUTTON_TEXT = ["Allow", "Continue", "Allow and Review", "Allow Once"]
     STUCK_MESSAGE = f"Your command took longer than {TIMEOUT_TOOL_LOADING/1000} seconds so I stopped it. I can't interact with terminal commands."
     REMOTE_OPENING_TEXT = "Opening Remote..."
@@ -1305,12 +1307,12 @@ class AutoVSCodeCopilot:
         await picker_locator.click()
         context_locator = self.page.locator('div.context-view div.monaco-list')
         await context_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_CONTEXT_LOCATOR)
-        option_locator = context_locator.locator(f'div.monaco-list-row.action > span.title:has-text({json.dumps(option_label)})')
+        option_locator = context_locator.locator(f'{Constants.SELECTOR_PICKER_OPTION}:has-text({json.dumps(option_label)})')
         # If the option isn't directly visible, try clicking "Other Models" to expand hidden options
         try:
             await option_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_OPTION_LOCATOR_VISIBLE)
         except PlaywrightTimeoutError:
-            other_models_locator = context_locator.locator('div.monaco-list-row.action > span.title:has-text("Other Models")')
+            other_models_locator = context_locator.locator(Constants.SELECTOR_PICKER_OTHER_MODELS)
             await other_models_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_OPTION_LOCATOR_VISIBLE)
             await other_models_locator.click(force=True, timeout=Constants.TIMEOUT_OPTION_CLICK)
             await option_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_OPTION_LOCATOR_VISIBLE)
@@ -1338,7 +1340,7 @@ class AutoVSCodeCopilot:
                         if await context_locator.is_visible():
                             options_seen = [
                                 option.strip()
-                                for option in await context_locator.locator('div.monaco-list-row.action > span.title').all_inner_texts()
+                                for option in await context_locator.locator(Constants.SELECTOR_PICKER_OPTION).all_inner_texts()
                                 if option.strip()
                             ]
                             if options_seen:
