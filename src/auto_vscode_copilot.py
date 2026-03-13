@@ -1315,6 +1315,7 @@ class AutoVSCodeCopilot:
             other_models_locator = context_locator.locator(Constants.SELECTOR_PICKER_OTHER_MODELS)
             await other_models_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_OPTION_LOCATOR_VISIBLE)
             await other_models_locator.click(force=True, timeout=Constants.TIMEOUT_OPTION_CLICK)
+            await option_locator.scroll_into_view_if_needed()
             await option_locator.wait_for(state='visible', timeout=Constants.TIMEOUT_OPTION_LOCATOR_VISIBLE)
         await option_locator.click(force=True, timeout=Constants.TIMEOUT_OPTION_CLICK)
         selected = await picker_locator.inner_text()
